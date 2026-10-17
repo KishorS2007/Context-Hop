@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Baton</title>
+  <link rel="stylesheet" href="../ui/tokens.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="popupHeader">
+    <div class="brand">
+      <svg class="batonLogo" width="22" height="22" aria-hidden="true">
+        <use href="../assets/icons.svg#icon-baton-logo"></use>
+      </svg>
+      <span class="brandName">Baton</span>
+    </div>
+    <div class="headerActions">
+      <button id="manageBtn" class="iconBtn" title="Open manager" aria-label="Open manager">
+        <svg width="16" height="16" aria-hidden="true"><use href="../assets/icons.svg#icon-external"></use></svg>
+      </button>
+      <div class="menuWrapper">
+        <button id="menuBtn" class="iconBtn" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
+          <svg width="16" height="16" aria-hidden="true"><use href="../assets/icons.svg#icon-menu"></use></svg>
+        </button>
+        <div id="headerMenu" class="dropdownMenu" hidden role="menu">
+          <div class="menuSectionHeader">Theme</div>
+          <div class="themeButtonGroup" role="radiogroup" aria-label="Select theme">
+            <button class="themeOptionBtn active" data-theme-val="auto" role="radio" aria-checked="true" title="Follow OS">Auto</button>
+            <button class="themeOptionBtn" data-theme-val="dark" role="radio" aria-checked="false" title="Dark theme">Dark</button>
+            <button class="themeOptionBtn" data-theme-val="light" role="radio" aria-checked="false" title="Light theme">Light</button>
+          </div>
+          <hr class="menuDivider">
+          <button id="menuClearAll" class="menuItem danger" role="menuitem">
+            <svg width="14" height="14" aria-hidden="true"><use href="../assets/icons.svg#icon-trash"></use></svg>
+            Clear all saved chats
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Signature Lane Line with the Yellow Baton Mark -->
+  <div class="laneTrack" aria-hidden="true">
+    <div id="laneBaton" class="laneBaton"></div>
+  </div>
+
+  <main class="popupBody">
+    <!-- Notice box if needed -->
+    <div id="autosaveNotice" class="noticeBox" hidden>
+      <span>Auto-save is now off. Capture a chat to save it.</span>
+      <button id="dismissNotice" class="dismissBtn" title="Dismiss" aria-label="Dismiss">&times;</button>
+    </div>
+
+    <!-- Active Tab / Current Chat Card -->
+    <section id="currentTabBox" class="currentTabCard" hidden>
+      <div class="cardTopRow">
+        <div id="currentTabChip" class="siteChip">
+          <span class="siteDot"></span>
+          <span class="siteMonogram">AI</span>
+        </div>
+        <div class="currentTitleWrapper">
+          <h2 id="currentChatTitle" class="currentChatTitle">Current tab</h2>
+        </div>
+        <span id="currentTabStatus" class="statusPill">Not saved</span>
+      </div>
+
+      <div class="currentMetaRow">
+        <span id="currentMsgCount" class="metaItem">0 messages</span>
+        <span id="currentSavedTime" class="metaItem">not saved yet</span>
+      </div>
+
+      <div class="captureControls">
+        <div class="captureBtnRow">
+          <button id="captureBtn" class="primaryBtn fullWidth">Capture chat</button>
+          <button id="cancelBtn" class="dangerBtn" hidden title="Stop scrolling and keep captured messages">Cancel</button>
+        </div>
+
+        <div id="captureProgressBox" class="captureProgressBox" hidden>
+          <div class="progressIndicator">
+            <span class="pulseDot"></span>
+            <span id="captureStatusText" class="progressText">Reading messages…</span>
+          </div>
+        </div>
+
+        <label class="toggleLabel">
+          <input type="checkbox" id="autosaveChat">
+          <span class="toggleSwitch"></span>
+          <span class="toggleText">Auto-update this chat</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Empty state when not on supported chat -->
+    <div id="noActiveTabBox" class="emptyCard" hidden>
+      <div class="emptyIconWrapper">
+        <svg width="24" height="24" aria-hidden="true"><use href="../assets/icons.svg#icon-chat"></use></svg>
+      </div>
+      <p class="emptyMessage">Open a chat in ChatGPT, Claude, Gemini or Kimi, then click Capture chat.</p>
+    </div>
+
+    <!-- Handoff Settings & Detail View (When a chat is selected) -->
+    <section id="detail" class="handoffSection" hidden>
+      <div class="sectionHeader">
+        <div class="sectionTitleRow">
+          <h3 id="detailTitle" class="sectionHeading">Handoff prompt</h3>
+          <span id="detailMeta" class="siteBadge"></span>
+        </div>
+      </div>
+
+      <!-- Segmented Size Selector -->
+      <div class="budgetSection">
+        <label class="fieldLabel" for="budget">Size limit</label>
+        <div class="segmentedControl" role="radiogroup" aria-label="Token size budget">
+          <button type="button" class="segmentBtn" data-value="2000" role="radio" aria-checked="false">2k</button>
+          <button type="button" class="segmentBtn active" data-value="5000" role="radio" aria-checked="true">5k</button>
+          <button type="button" class="segmentBtn" data-value="10000" role="radio" aria-checked="false">10k</button>
+          <button type="button" class="segmentBtn" data-value="20000" role="radio" aria-checked="false">20k</button>
+        </div>
+        <!-- Hidden select for programmatic access -->
+        <select id="budget" hidden aria-hidden="true">
+          <option value="2000">~2k tokens (short)</option>
+          <option value="5000" selected>~5k tokens</option>
+          <option value="10000">~10k tokens</option>
+          <option value="20000">~20k tokens</option>
+        </select>
+      </div>
+
+      <!-- Notes Field -->
+      <div class="notesSection">
+        <label class="fieldLabel" for="notes">Your summary / notes (optional)</label>
+        <textarea id="notes" class="notesTextarea" rows="1" placeholder="Goal, current state, next step. Or paste summary here…"></textarea>
+        <button id="copyPrompt" type="button" class="textLinkBtn">
+          Copy a prompt that asks the AI for a handoff summary
+        </button>
+      </div>
+
+      <!-- Token Meter & Stats -->
+      <div class="tokenMeterBox">
+        <div class="tokenMeterHeader">
+          <span id="tokenCountLabel" class="tokenCount">0 of 5,000 tokens</span>
+          <span id="tokenWarning" class="tokenWarning" hidden>over budget</span>
+        </div>
+        <div class="meterTrack" aria-hidden="true">
+          <div id="meterFill" class="meterFill"></div>
+        </div>
+        <div id="stats" class="tokenSubtext">0 messages verbatim</div>
+      </div>
+
+      <!-- Collapsible Preview -->
+      <div class="previewSection">
+        <div class="previewHeader">
+          <label class="fieldLabel" for="preview">Prompt preview</label>
+          <button type="button" id="togglePreviewBtn" class="textLinkBtn small">Show full preview</button>
+        </div>
+        <div id="previewWrapper" class="previewWrapper collapsed">
+          <textarea id="preview" rows="5" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- Saved Chats Accordion / Section -->
+    <section class="savedChatsSection">
+      <div class="savedSectionHeader">
+        <h3 class="sectionHeading">Saved chats</h3>
+        <button id="seeAllBtn" type="button" class="textLinkBtn small">See all in manager</button>
+      </div>
+
+      <div class="listSearchRow">
+        <div class="searchBox">
+          <svg width="14" height="14" class="searchIcon" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg>
+          <input type="search" id="popupSearch" placeholder="Search saved chats…" aria-label="Search saved chats">
+        </div>
+      </div>
+
+      <div id="list" class="chatList" role="listbox" aria-label="Saved chats list"></div>
+    </section>
+  </main>
+
+  <!-- Sticky Footer -->
+  <footer class="popupFooter">
+    <div class="footerActionGroup">
+      <button id="copy" class="primaryBtn copyActionBtn">
+        <svg width="15" height="15" aria-hidden="true"><use href="../assets/icons.svg#icon-copy"></use></svg>
+        <span id="copyBtnText">Copy context</span>
+      </button>
+      <button id="export" class="secondaryBtn" title="Export as Markdown">
+        <svg width="15" height="15" aria-hidden="true"><use href="../assets/icons.svg#icon-download"></use></svg>
+        <span>Export .md</span>
+      </button>
+      <button id="delete" class="iconBtn dangerBtn" title="Delete this chat" aria-label="Delete this chat">
+        <svg width="15" height="15" aria-hidden="true"><use href="../assets/icons.svg#icon-trash"></use></svg>
+      </button>
+    </div>
+  </footer>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- Inline Confirmation Dialog -->
+  <dialog id="confirmDialog" class="confirmDialog">
+    <div class="confirmBox">
+      <h4 id="confirmHeading" class="confirmHeading">Confirm action</h4>
+      <p id="confirmMessage" class="confirmMessage">Are you sure?</p>
+      <div class="confirmActions">
+        <button type="button" id="confirmCancelBtn" class="secondaryBtn small">Cancel</button>
+        <button type="button" id="confirmAcceptBtn" class="dangerBtn small">Delete</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Legacy hidden element for plain status if needed -->
+  <p id="status" class="sr-only" role="status"></p>
+  <button id="clearAll" hidden aria-hidden="true"></button>
+
+  <script src="../src/adapters.js"></script>
+  <script src="../src/compress.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

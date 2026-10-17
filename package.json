@@ -1,0 +1,12 @@
+{
+  "name": "ai-context-handoff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that saves AI chats locally and builds a compact handoff for another account.",
+  "scripts": {
+    "test": "node tests/run.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

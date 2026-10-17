@@ -1,0 +1,221 @@
+/* ==========================================================================
+   Baton Design System Tokens
+   Palette: "ink canvas, one yellow baton"
+   ========================================================================== */
+
+/* Local font face definitions */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../assets/fonts/bricolage-grotesque-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/bricolage-grotesque-700.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/hanken-grotesk-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../assets/fonts/hanken-grotesk-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../assets/fonts/hanken-grotesk-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/jetbrains-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../assets/fonts/jetbrains-mono-500.woff2') format('woff2');
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:root {
+  /* Typography */
+  --font-heading: 'Bricolage Grotesque', system-ui, -apple-system, sans-serif;
+  --font-ui: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-code: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Radii by role */
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-pill: 9999px;
+  --radius-code: 8px;
+
+  /* Motion */
+  --transition-fast: 140ms ease-out;
+
+  /* Platform Accent Dot Colors */
+  --platform-chatgpt: #10A37F;
+  --platform-claude: #D97706;
+  --platform-gemini: #3B82F6;
+  --platform-kimi: #06B6D4;
+}
+
+/* --------------------------------------------------------------------------
+   Dark Theme (Default)
+   -------------------------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  --ink-0: #0B1220;         /* page */
+  --ink-1: #111B2E;         /* panels */
+  --ink-2: #182640;         /* raised / hover */
+  --ink-3: #213558;         /* selected */
+
+  --line: #26385A;
+  --line-strong: #36507C;
+
+  --text: #E8EDF7;          /* primary text (WCAG AAA) */
+  --text-2: #A5B2C8;        /* secondary text (WCAG AA) */
+  --text-3: #7283A0;        /* subtle captions/borders */
+
+  --action: #3E63F0;        /* quiet action blue */
+  --action-hover: #4D71FF;
+  --action-active: #2F52DB;
+  --action-subtle: rgba(62, 99, 240, 0.15);
+  --link: #8FB0FF;
+
+  --baton: #FFC83D;         /* warm signature yellow */
+  --baton-glow: rgba(255, 200, 61, 0.2);
+
+  --ok: #3FCB8E;
+  --ok-bg: rgba(63, 203, 142, 0.12);
+  --warn: #F2B544;
+  --warn-bg: rgba(242, 181, 68, 0.12);
+  --danger: #F0626A;
+  --danger-bg: rgba(240, 98, 106, 0.12);
+
+  --floating-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --chip-bg: rgba(255, 255, 255, 0.05);
+  --code-bg: #090E19;
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --ink-0: #F4F6FA;         /* page */
+  --ink-1: #FFFFFF;         /* panels */
+  --ink-2: #EAEFF8;         /* raised / hover */
+  --ink-3: #DDE6F5;         /* selected */
+
+  --line: #DCE2EE;
+  --line-strong: #C2CCDF;
+
+  --text: #111A2B;          /* primary text */
+  --text-2: #526079;        /* secondary text (5.5:1 on white) */
+  --text-3: #71819C;        /* subtle text/border */
+
+  --action: #2C4FD8;
+  --action-hover: #2141C4;
+  --action-active: #1732A5;
+  --action-subtle: rgba(44, 79, 216, 0.08);
+  --link: #2443BE;
+
+  --baton: #E5A200;         /* baton as shape or fill, never as text on white */
+  --baton-glow: rgba(229, 162, 0, 0.25);
+
+  --ok: #15803D;
+  --ok-bg: rgba(21, 128, 61, 0.1);
+  --warn: #B45309;
+  --warn-bg: rgba(180, 83, 9, 0.1);
+  --danger: #DC2626;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+
+  --floating-shadow: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
+  --chip-bg: #E8EEF8;
+  --code-bg: #EAEFF8;
+}
+
+/* Auto theme: follows OS when data-theme is "auto" */
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] {
+    --ink-0: #F4F6FA;
+    --ink-1: #FFFFFF;
+    --ink-2: #EAEFF8;
+    --ink-3: #DDE6F5;
+
+    --line: #DCE2EE;
+    --line-strong: #C2CCDF;
+
+    --text: #111A2B;
+    --text-2: #526079;
+    --text-3: #71819C;
+
+    --action: #2C4FD8;
+    --action-hover: #2141C4;
+    --action-active: #1732A5;
+    --action-subtle: rgba(44, 79, 216, 0.08);
+    --link: #2443BE;
+
+    --baton: #E5A200;
+    --baton-glow: rgba(229, 162, 0, 0.25);
+
+    --ok: #15803D;
+    --ok-bg: rgba(21, 128, 61, 0.1);
+    --warn: #B45309;
+    --warn-bg: rgba(180, 83, 9, 0.1);
+    --danger: #DC2626;
+    --danger-bg: rgba(220, 38, 38, 0.1);
+
+    --floating-shadow: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
+    --chip-bg: #E8EEF8;
+    --code-bg: #EAEFF8;
+  }
+}
+
+/* Density settings */
+[data-density="compact"] {
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-6: 18px;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
