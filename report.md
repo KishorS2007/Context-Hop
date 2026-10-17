@@ -132,13 +132,23 @@ Existing unit tests explicitly validate this behavior in `tests/run.js`:
 
 ---
 
-### Recommendation
+### Implemented Solution
 
-**Do not delete the box.** Instead, update the user-facing label and helper text in both the popup and manager interfaces to make its true purpose immediately obvious to users:
+As requested, we addressed the ambiguity of the box across both extension surfaces (manager and popup):
 
-- **Suggested Label**: `Handoff Summary / Instructions (optional)`
-- **Suggested Placeholder**: `Paste AI summary from "Copy summary prompt" or add instructions for the new chat...`
-- **Helper Tooltip**: `Injected at the very top of your handoff prompt so the new AI knows the goal, decisions, and next steps.`
+1. **Clarified Label**:
+   Renamed from the ambiguous `"Your summary / notes (optional)"` to:
+   ```html
+   <label class="fieldLabel">Handoff summary & instructions <span class="optionalTag">(optional)</span></label>
+   ```
+2. **Interactive Info Button & Icon**:
+   Added a dedicated, subtle info button (`#notesInfoBtn`) with an SVG info icon next to the label.
+3. **Explaining Pop-Up Dialog (`#notesInfoModal`)**:
+   Clicking the info icon displays an accessible, informative pop-up card explaining:
+   - **Priority #1 (Never Dropped)**: Content in this box is injected at the very top of the prompt (`## Goal and summary`).
+   - **3-Step AI Workflow (Free)**: How to use the *"Copy summary prompt"* button, paste it to their active chat, and paste the AI's 5-point reply back into this box.
+   - **Custom Directives**: How they can also manually write architecture rules, stack choices, or next steps for the target model.
+   - Includes a **"Got it"** dismissal button, close icon (`×`), Escape key handling, and outside click dismiss.
 
 ---
 

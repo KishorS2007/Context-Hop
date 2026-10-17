@@ -13,6 +13,7 @@
   let firstQueued = 0;
   let warned = false;
   let observer = null;
+  let isCapturing = false;
 
   const writeQueues = new Map();
 
@@ -48,6 +49,7 @@
   }
 
   async function save() {
+    if (isCapturing) return { ok: false, error: 'Autosave paused during capture' };
     timer = null;
     firstQueued = 0;
     const chatId = adapter.chatId();
@@ -323,35 +325,14 @@
     const sk = 'chat:' + key;
 
     let initialCount = 0;
-    let allMessages = [];
-
-    // Save immediately within exclusive queue so something is kept even if scrolling fails
-    await runExclusive(key, async () => {
-      const prev = (await chrome.storage.local.get(sk))[sk];
-      initialCount = (prev && prev.messages && prev.messages.length) || 0;
-      allMessages = CTX.merge(prev && prev.messages, fresh);
-      if (prev && prev.messages && allMessages.length < prev.messages.length) {
-        allMessages = prev.messages;
-      }
-      const hash = hashOf(allMessages);
-      await chrome.storage.local.set({
-        [sk]: {
-          key,
-          site: adapter.id,
-          siteName: adapter.name,
-          title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
-          titleEdited: Boolean(prev && prev.titleEdited),
-          url: location.href,
-          updatedAt: Date.now(),
-          messages: allMessages,
-          hash,
-        },
-      });
-    });
-
+    let storedBeforeCapture = null;
     try {
-      chrome.runtime.sendMessage({ type: 'ctx:captureProgress', phase: 'reading', count: allMessages.length });
+      const prevData = (await chrome.storage.local.get(sk))[sk];
+      storedBeforeCapture = prevData;
+      initialCount = (prevData && prevData.messages && prevData.messages.length) || 0;
     } catch (e) {}
+
+    let allMessages = [];
 
     // 2. Find the scroller robustly
     const scrollerRes = findScroller();
@@ -360,11 +341,33 @@
         return { ok: false, error: scrollerRes.error };
       }
       // Content completely fits within viewport (no scroll overflow anywhere)
-      const stored = (await chrome.storage.local.get(sk))[sk];
-      const totalCount = (stored && stored.messages && stored.messages.length) || allMessages.length;
+      allMessages = fresh;
+      try {
+        chrome.runtime.sendMessage({ type: 'ctx:captureProgress', phase: 'reading', count: allMessages.length });
+      } catch (e) {}
+      const isComplete = true;
+      await runExclusive(key, async () => {
+        const prev = (await chrome.storage.local.get(sk))[sk];
+        const hash = hashOf(allMessages);
+        await chrome.storage.local.set({
+          [sk]: {
+            key,
+            site: adapter.id,
+            siteName: adapter.name,
+            title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
+            titleEdited: Boolean(prev && prev.titleEdited),
+            url: location.href,
+            updatedAt: Date.now(),
+            messages: allMessages,
+            hash,
+          },
+        });
+      });
+
+      const totalCount = allMessages.length;
       const addedCount = Math.max(0, totalCount - initialCount);
       const summary = 'Captured ' + totalCount + ' messages (' + addedCount + ' new)';
-      const report = summary + '. Reached the start of the chat: yes. Steps: 0.';
+      const report = summary + '. Duplicates removed: 0. Possible gaps: 0. Ambiguous overlaps: 0. Reached the start: yes. Steps: 0.';
       return { ok: true, count: totalCount, added: addedCount, summary, reachedStart: true, steps: 0, report, skippedScroll: true };
     }
 
@@ -373,130 +376,222 @@
       return { ok: false, error: "Could not find the chat's scroll area" };
     }
 
-    // 3. Scroll phase: loop from current position up to the top
+    const scrollerNode = (scroller === window || scroller === document.scrollingElement) ? document.body : scroller;
     const initialScrollTop = getScrollTop(scroller);
-    let currentY = initialScrollTop;
+
+    isCapturing = true;
     let step = 0;
     let reachedStart = false;
+    let scrollBlocked = false;
+    const gaps = [];
+    let ambiguousCount = 0;
+    const stepLogs = [];
+    let debugCapture = false;
+    try {
+      debugCapture = typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('ui:debugCapture') === '1';
+    } catch (e) {}
+
     const startTime = Date.now();
     const MAX_TIME_MS = 180000; // ~3 minutes hard cap
     const MAX_STEPS = 400; // ~400 steps hard cap
     const QUIET_IDLE_MS = CTX.QUIET_IDLE_MS !== undefined ? CTX.QUIET_IDLE_MS : 400;
     const QUIET_MAX_MS = CTX.QUIET_MAX_MS !== undefined ? CTX.QUIET_MAX_MS : 3000;
-    const GRACE_CHECK_MS = CTX.GRACE_CHECK_MS !== undefined ? CTX.GRACE_CHECK_MS : 500;
+    const CHECK_INTERVAL = CTX.GRACE_CHECK_MS !== undefined ? CTX.GRACE_CHECK_MS : 500;
 
     try {
+      // Part B #1: Before first scrape: scroll scroller to bottom, wait DOM quiet, scrape and merge
+      setScrollTop(scroller, Math.max(getScrollHeight(scroller), getScrollTop(scroller)));
+      await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
+
+      let bottomFresh = CTX.scrape(adapter);
+      // Part B #5: Render check: if any message has empty text, wait and rescan (up to ~3 s)
+      if (bottomFresh.some((m) => !m.text || !m.text.trim())) {
+        const wStart = Date.now();
+        while (Date.now() - wStart < 3000 && bottomFresh.some((m) => !m.text || !m.text.trim())) {
+          await new Promise((r) => setTimeout(r, 200));
+          bottomFresh = CTX.scrape(adapter);
+        }
+      }
+      allMessages = bottomFresh;
+
+      // Save initial bottom state immediately within exclusive queue
+      await runExclusive(key, async () => {
+        const prev = (await chrome.storage.local.get(sk))[sk];
+        const hash = hashOf(allMessages);
+        await chrome.storage.local.set({
+          [sk]: {
+            key,
+            site: adapter.id,
+            siteName: adapter.name,
+            title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
+            titleEdited: Boolean(prev && prev.titleEdited),
+            url: location.href,
+            updatedAt: Date.now(),
+            messages: allMessages,
+            hash,
+          },
+        });
+      });
+
+      try {
+        chrome.runtime.sendMessage({ type: 'ctx:captureProgress', phase: 'reading', count: allMessages.length });
+      } catch (e) {}
+
+      let realY = getScrollTop(scroller);
+      let lastSH = getScrollHeight(scroller);
+
+      // Part B: Upward scroll loop
       while (!cancelCaptureRequested && Date.now() - startTime < MAX_TIME_MS && step < MAX_STEPS) {
-        // If at or near top (scrollTop <= 2), perform grace checks across 4 consecutive checks
-        if (currentY <= 2) {
-          let consecutiveNoChange = 0;
-          let graceCheckCount = 0;
-
-          while (graceCheckCount < 4 && !cancelCaptureRequested && Date.now() - startTime < MAX_TIME_MS && step < MAX_STEPS) {
-            graceCheckCount++;
-            await waitDomQuiet(
-              scroller === window || scroller === document.scrollingElement ? document.body : scroller,
-              Math.min(QUIET_IDLE_MS, GRACE_CHECK_MS),
-              GRACE_CHECK_MS
-            );
-            if (cancelCaptureRequested) break;
-
+        // Near top check (realY <= 2)
+        if (realY <= 2) {
+          // Part B #6: wait until scrollHeight stays unchanged for 2 consecutive checks (500 ms apart, max 3 s)
+          let topWaitStart = Date.now();
+          let topPrevSH = getScrollHeight(scroller);
+          let consecutiveTopNoChange = 0;
+          while (Date.now() - topWaitStart < 3000 && consecutiveTopNoChange < 2 && !cancelCaptureRequested) {
+            await new Promise((r) => setTimeout(r, CHECK_INTERVAL));
+            await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, Math.min(QUIET_MAX_MS, CHECK_INTERVAL));
             step++;
-            const gPrevCount = allMessages.length;
-            const gPrevSH = getScrollHeight(scroller);
-            const gPrevFirstText = (allMessages[0] && allMessages[0].text) || '';
-
-            const gFresh = CTX.scrape(adapter);
-            if (gFresh.length) {
-              allMessages = CTX.merge(allMessages, gFresh);
-            }
-
-            const gCurrCount = allMessages.length;
-            const gCurrSH = getScrollHeight(scroller);
-            const gCurrFirstText = (allMessages[0] && allMessages[0].text) || '';
-            const gY = getScrollTop(scroller);
-
-            console.debug(
-              '[Context Handoff] Step ' + step + ' (grace check ' + graceCheckCount + '):',
-              describeScroller(scroller),
-              'scrollTop=' + gY,
-              'scrollHeight=' + gCurrSH,
-              'messages=' + gCurrCount
-            );
-
-            try {
-              chrome.runtime.sendMessage({
-                type: 'ctx:captureProgress',
-                phase: 'loading',
-                count: allMessages.length,
-                step,
-              });
-            } catch (e) {}
-
-            const changed = (gCurrCount > gPrevCount) || (gCurrSH !== gPrevSH) || (gCurrFirstText !== gPrevFirstText);
-            if (changed) {
-              consecutiveNoChange = 0;
-              graceCheckCount = 0;
-              if (gY > 2) {
-                currentY = gY;
-                break; // Content shifted scroll position down, resume scrolling!
+            const topNewSH = getScrollHeight(scroller);
+            if (topNewSH === topPrevSH) {
+              consecutiveTopNoChange++;
+            } else {
+              consecutiveTopNoChange = 0;
+              topWaitStart = Date.now();
+              topPrevSH = topNewSH;
+              let topFresh = CTX.scrape(adapter);
+              if (topFresh.length) {
+                const topMerge = CTX.mergeDetailed(allMessages, topFresh, { prefer: 'head' });
+                if (!topMerge.gap && topMerge.kind !== 'no-overlap') {
+                  allMessages = topMerge.messages;
+                  if (topMerge.ambiguous) ambiguousCount++;
+                }
+              }
+              try {
+                chrome.runtime.sendMessage({
+                  type: 'ctx:captureProgress',
+                  phase: 'loading',
+                  count: allMessages.length,
+                  step,
+                });
+              } catch (e) {}
+              const topY = getScrollTop(scroller);
+              if (topY > 2) {
+                realY = topY;
+                break;
               }
               setScrollTop(scroller, 0);
-            } else {
-              consecutiveNoChange++;
             }
           }
-
-          if (consecutiveNoChange >= 4) {
+          if (consecutiveTopNoChange >= 2 || Date.now() - topWaitStart >= 3000) {
             reachedStart = true;
             break;
           }
-          if (currentY > 2) {
-            continue;
-          }
-          if (graceCheckCount >= 4) {
-            reachedStart = (consecutiveNoChange >= 4);
-            break;
-          }
+          if (realY > 2) continue;
         }
 
         // Normal step upwards (70% viewport height)
         step++;
         const ch = getClientHeight(scroller);
-        const stepSize = Math.max(150, Math.floor(ch * 0.7));
-        const prevY = currentY;
-        const targetY = Math.max(0, currentY - stepSize);
+        let stepSize = Math.max(150, Math.floor(ch * 0.7));
+        const prevY = realY;
+        const targetY = Math.max(0, realY - stepSize);
         setScrollTop(scroller, targetY);
-        currentY = getScrollTop(scroller);
 
-        // Wait until DOM is quiet
-        await waitDomQuiet(
-          scroller === window || scroller === document.scrollingElement ? document.body : scroller,
-          QUIET_IDLE_MS,
-          QUIET_MAX_MS
-        );
+        // Part B #2: Re-read scrollTop AFTER waitDomQuiet and after scrape;
+        // compute next target from real position, never from cached currentY.
+        await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
         if (cancelCaptureRequested) break;
 
-        const prevCount = allMessages.length;
-        const prevSH = getScrollHeight(scroller);
-        const prevFirstText = (allMessages[0] && allMessages[0].text) || '';
+        realY = getScrollTop(scroller);
 
-        const stepFresh = CTX.scrape(adapter);
-        if (stepFresh.length) {
-          allMessages = CTX.merge(allMessages, stepFresh);
+        // Treat change of scrollHeight between steps as possible prepended content
+        const currentSH = getScrollHeight(scroller);
+        if (currentSH !== lastSH) {
+          await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
+          lastSH = getScrollHeight(scroller);
+          realY = getScrollTop(scroller);
         }
 
-        const currentSH = getScrollHeight(scroller);
-        const currentCount = allMessages.length;
-        const currentFirstText = (allMessages[0] && allMessages[0].text) || '';
+        // Part B #3: Remove jump to 0. If scroller did not move upward, retry with smaller step, then give up with scroll blocked
+        if (realY >= prevY && targetY < prevY) {
+          let unblocked = false;
+          let retryStep = Math.floor(stepSize / 2);
+          while (retryStep >= 20) {
+            const tryY = Math.max(0, realY - retryStep);
+            setScrollTop(scroller, tryY);
+            await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
+            const newY = getScrollTop(scroller);
+            if (newY < realY) {
+              realY = newY;
+              unblocked = true;
+              break;
+            }
+            retryStep = Math.floor(retryStep / 2);
+          }
+          if (!unblocked) {
+            scrollBlocked = true;
+            break;
+          }
+        }
 
-        console.debug(
-          '[Context Handoff] Step ' + step + ':',
-          describeScroller(scroller),
-          'scrollTop=' + currentY,
-          'scrollHeight=' + currentSH,
-          'messages=' + currentCount
-        );
+        // Scrape window
+        let windowFresh = CTX.scrape(adapter);
+
+        // Part B #5: Render check: if any message has empty text, wait and rescan (up to ~3 s)
+        if (windowFresh.some((m) => !m.text || !m.text.trim())) {
+          const wStart = Date.now();
+          while (Date.now() - wStart < 3000 && windowFresh.some((m) => !m.text || !m.text.trim())) {
+            await new Promise((r) => setTimeout(r, 200));
+            windowFresh = CTX.scrape(adapter);
+          }
+        }
+
+        // Part B #4: Overlap guard per step: call mergeDetailed(acc, window, {prefer: 'head'}).
+        // If kind is 'no-overlap' or 'ambiguous': scroll down by about half step, wait quiet, rescan,
+        // retry with smaller step (up to 5 attempts, each halving). If still fails, record gap marker and continue.
+        let mRes = CTX.mergeDetailed(allMessages, windowFresh, { prefer: 'head' });
+        if (mRes.kind === 'no-overlap' || mRes.kind === 'ambiguous') {
+          let currentRetryStep = stepSize;
+          let recovered = false;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            currentRetryStep = Math.max(20, Math.floor(currentRetryStep / 2));
+            setScrollTop(scroller, getScrollTop(scroller) + Math.floor(currentRetryStep / 2));
+            await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
+            const retryFresh = CTX.scrape(adapter);
+            mRes = CTX.mergeDetailed(allMessages, retryFresh, { prefer: 'head' });
+            if (mRes.kind !== 'no-overlap' && mRes.kind !== 'ambiguous') {
+              recovered = true;
+              windowFresh = retryFresh;
+              break;
+            }
+          }
+          if (!recovered) {
+            gaps.push({ index: allMessages.length, scrollTop: realY });
+          } else {
+            allMessages = mRes.messages;
+            if (mRes.ambiguous) ambiguousCount++;
+          }
+        } else {
+          allMessages = mRes.messages;
+          if (mRes.ambiguous) ambiguousCount++;
+        }
+
+        // Part B #10: Debug log when localStorage "ui:debugCapture" === "1"
+        if (debugCapture) {
+          stepLogs.push({
+            step,
+            scrollTop: realY,
+            scrollHeight: getScrollHeight(scroller),
+            window: windowFresh.map((m) => [m.role, m.text.length, m.text.slice(0, 40), hashOf([m]), m.id || null]),
+            result: {
+              kind: mRes.kind,
+              overlap: mRes.overlap,
+              ambiguous: mRes.ambiguous,
+              gap: mRes.gap,
+            },
+          });
+        }
 
         try {
           chrome.runtime.sendMessage({
@@ -506,15 +601,11 @@
             step,
           });
         } catch (e) {}
-
-        // If scroller didn't move despite targetY < prevY
-        if (currentY === prevY && targetY < prevY) {
-          setScrollTop(scroller, 0);
-          currentY = getScrollTop(scroller);
-        }
       }
     } finally {
-      // Always restore the original scroll position (try/finally), also on error and on cancel
+      // Part B #7: Clear isCapturing in finally
+      isCapturing = false;
+      // Always restore original scroll position in finally
       setScrollTop(scroller, initialScrollTop);
     }
 
@@ -526,54 +617,101 @@
       if (hashOf(end1) !== hashOf(end2)) {
         return { ok: false, error: 'The reply is still streaming. Try again in a moment.' };
       }
-      allMessages = CTX.merge(allMessages, end2);
+      const endMerge = CTX.mergeDetailed(allMessages, end2, { prefer: 'head' });
+      if (!endMerge.gap && endMerge.kind !== 'no-overlap') {
+        allMessages = endMerge.messages;
+      }
     }
 
-    // Final save to storage within exclusive queue
+    // Part B #9: Count duplicates removed D
+    let prevAdjacentDupes = 0;
+    if (storedBeforeCapture && storedBeforeCapture.messages) {
+      const pm = storedBeforeCapture.messages;
+      for (let di = 1; di < pm.length; di++) {
+        const fp1 = CTX.fingerprint ? CTX.fingerprint(pm[di]) : (pm[di].role + ':' + pm[di].text);
+        const fp0 = CTX.fingerprint ? CTX.fingerprint(pm[di - 1]) : (pm[di - 1].role + ':' + pm[di - 1].text);
+        if (fp1 === fp0) prevAdjacentDupes++;
+      }
+    }
+    let finalAdjacentDupes = 0;
+    for (let di = 1; di < allMessages.length; di++) {
+      const fp1 = CTX.fingerprint ? CTX.fingerprint(allMessages[di]) : (allMessages[di].role + ':' + allMessages[di].text);
+      const fp0 = CTX.fingerprint ? CTX.fingerprint(allMessages[di - 1]) : (allMessages[di - 1].role + ':' + allMessages[di - 1].text);
+      if (fp1 === fp0) finalAdjacentDupes++;
+    }
+    const duplicatesRemoved = Math.max(0, prevAdjacentDupes - finalAdjacentDupes);
+
+    // Part B #8: Final result: if reachedStart is true and no gaps and no ambiguous steps,
+    // REPLACE stored messages skipping the "count never decreases" guard to heal duplicates.
+    // If incomplete scan, merge into stored data as today with guard.
+    const isComplete = reachedStart && gaps.length === 0 && ambiguousCount === 0;
+
     await runExclusive(key, async () => {
       const prev = (await chrome.storage.local.get(sk))[sk];
-      let merged = CTX.merge(prev && prev.messages, allMessages);
-      if (prev && prev.messages && merged.length < prev.messages.length) {
-        merged = prev.messages;
+      if (isComplete) {
+        const hash = hashOf(allMessages);
+        await chrome.storage.local.set({
+          [sk]: {
+            key,
+            site: adapter.id,
+            siteName: adapter.name,
+            title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
+            titleEdited: Boolean(prev && prev.titleEdited),
+            url: location.href,
+            updatedAt: Date.now(),
+            messages: allMessages,
+            hash,
+          },
+        });
+      } else {
+        let merged = CTX.merge(prev && prev.messages, allMessages);
+        if (prev && prev.messages && merged.length < prev.messages.length) {
+          merged = prev.messages;
+        }
+        allMessages = merged;
+        const hash = hashOf(allMessages);
+        await chrome.storage.local.set({
+          [sk]: {
+            key,
+            site: adapter.id,
+            siteName: adapter.name,
+            title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
+            titleEdited: Boolean(prev && prev.titleEdited),
+            url: location.href,
+            updatedAt: Date.now(),
+            messages: allMessages,
+            hash,
+          },
+        });
       }
-      allMessages = merged;
-      const hash = hashOf(allMessages);
-      await chrome.storage.local.set({
-        [sk]: {
-          key,
-          site: adapter.id,
-          siteName: adapter.name,
-          title: prev && prev.titleEdited ? prev.title : titleOf(allMessages),
-          titleEdited: Boolean(prev && prev.titleEdited),
-          url: location.href,
-          updatedAt: Date.now(),
-          messages: allMessages,
-          hash,
-        },
-      });
     });
 
-    // Read back stored chat after write completes to ensure accurate final count
-    const stored = (await chrome.storage.local.get(sk))[sk];
-    const totalCount = (stored && stored.messages && stored.messages.length) || allMessages.length;
-    const addedCount = Math.max(0, totalCount - initialCount);
+    // Part B #9: Report string
+    const gapStr = gaps.length
+      ? `${gaps.length} (${gaps.map((g) => 'near message ' + g.index).join(', ')})`
+      : '0';
+    const summary = 'Captured ' + allMessages.length + ' messages (' + Math.max(0, allMessages.length - initialCount) + ' new)';
+    let report = `Captured ${allMessages.length} messages. Duplicates removed: ${duplicatesRemoved}. Possible gaps: ${gapStr}. Ambiguous overlaps: ${ambiguousCount}. Reached the start: ${reachedStart ? 'yes' : 'no'}.`;
+    if (scrollBlocked) report += ' (scroll blocked)';
 
-    const summary = 'Captured ' + totalCount + ' messages (' + addedCount + ' new)';
-    const report =
-      summary + '. ' +
-      'Reached the start of the chat: ' + (reachedStart ? 'yes' : 'no') + '. ' +
-      'Steps: ' + step + '.' +
-      (reachedStart ? '' : ' Try running Capture again to load earlier history.');
+    if (debugCapture) {
+      CTX.debugCaptureLog = stepLogs;
+    }
 
     return {
       ok: true,
-      count: totalCount,
-      added: addedCount,
+      count: allMessages.length,
+      added: Math.max(0, allMessages.length - initialCount),
       summary,
       reachedStart,
       steps: step,
       report,
       cancelled: cancelCaptureRequested,
+      duplicatesRemoved,
+      gaps: gaps.length,
+      ambiguous: ambiguousCount,
+      scrollBlocked,
+      debugLog: debugCapture ? stepLogs : undefined,
     };
   }
 

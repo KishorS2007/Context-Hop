@@ -211,6 +211,30 @@
     });
   }
 
+  function extractId(el) {
+    if (!el || el.nodeType !== 1) return null;
+    if (el.hasAttribute('data-message-id')) return el.getAttribute('data-message-id');
+    if (el.hasAttribute('data-chatgpt-search-unit-key')) return el.getAttribute('data-chatgpt-search-unit-key');
+    if (el.hasAttribute('data-content-search-unit-key')) return el.getAttribute('data-content-search-unit-key');
+    if (el.hasAttribute('data-turn-key')) return el.getAttribute('data-turn-key');
+    const tid = el.getAttribute('data-testid');
+    if (tid && /^conversation-turn-\d+/.test(tid)) return tid;
+
+    const unitAncestor = el.closest('[data-message-id], [data-chatgpt-search-unit-key], [data-turn-key]');
+    if (unitAncestor) {
+      return (
+        unitAncestor.getAttribute('data-message-id') ||
+        unitAncestor.getAttribute('data-chatgpt-search-unit-key') ||
+        unitAncestor.getAttribute('data-turn-key')
+      );
+    }
+    const turnAncestor = el.closest('article[data-testid*="conversation-turn"], [data-testid^="conversation-turn"]');
+    if (turnAncestor) {
+      return turnAncestor.getAttribute('data-testid') || turnAncestor.getAttribute('data-message-id');
+    }
+    return null;
+  }
+
   function scrape(adapter) {
     const us = adapter.user.join(',');
     const as = adapter.assistant.join(',');
@@ -239,7 +263,12 @@
         raw = hosts.map((h) => markdown(h)).filter(Boolean).join('\n\n');
       }
       const text = CTX.redact ? CTX.redact(raw) : raw;
-      if (text) out.push({ role, text });
+      if (text) {
+        const id = extractId(el);
+        const msg = { role, text };
+        if (id) msg.id = id;
+        out.push(msg);
+      }
     }
     return out;
   }
@@ -252,103 +281,307 @@
     };
   }
 
-  function sameMsg(a, b) {
-    return !!(a && b && a.role === b.role && a.text === b.text);
-  }
-
   function normText(s) {
     if (typeof s !== 'string') return '';
     return s
       .replace(/\r\n/g, '\n')
-      .replace(/[\u00a0\u2000-\u200b\u2028\u2029]/g, ' ')
+      .replace(/\r/g, '\n')
+      .replace(/[\u200b-\u200f\u2060\ufeff]/g, '')
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+      .replace(/[\u00a0\u2000-\u200a\u2028\u2029\u3000]/g, ' ')
       .replace(/[ \t]+/g, ' ')
       .replace(/[ \t]*\n[ \t]*/g, '\n')
       .replace(/\n{2,}/g, '\n')
       .trim();
   }
 
-  function matchMsg(freshMsg, prevMsg, isPrevLast, hadExactMatch) {
-    if (!freshMsg || !prevMsg || freshMsg.role !== prevMsg.role) return false;
-    if (freshMsg.text === prevMsg.text) return true;
-    const nf = normText(freshMsg.text);
-    const np = normText(prevMsg.text);
-    if (nf === np) return true;
-    if (isPrevLast && hadExactMatch && (nf.startsWith(np) || prevMsg.role === 'assistant')) {
-      return true;
-    }
+  function fingerprint(msg) {
+    if (!msg) return '';
+    if (msg.id) return msg.role + ':id:' + msg.id;
+    return msg.role + ':' + normText(msg.text);
+  }
+
+  function isPrefixMatch(a, b) {
+    if (!a || !b) return false;
+    let shorter = a.length <= b.length ? a : b;
+    const longer = a.length <= b.length ? b : a;
+    shorter = shorter.replace(/(?:\.{3,}|…|\s)+$/, '');
+    if (shorter.length < 5) return false;
+    if (!longer.startsWith(shorter)) return false;
+    const nextChar = longer[shorter.length];
+    if (!nextChar) return true;
+    if (shorter.length >= 20) return true;
+    return /[\s\p{P}]/u.test(nextChar) || /[\s\p{P}]$/u.test(shorter);
+  }
+
+  function sameMsg(a, b) {
+    if (!a || !b || a.role !== b.role) return false;
+    if (a.id && b.id) return a.id === b.id;
+    if (a.text === b.text) return true;
+    const na = normText(a.text);
+    const nb = normText(b.text);
+    if (na === nb) return true;
+    if (na && nb && isPrefixMatch(na, nb)) return true;
     return false;
+  }
+
+  function pickLonger(msgA, msgB) {
+    if (!msgA) return msgB ? { ...msgB } : null;
+    if (!msgB) return { ...msgA };
+    const textA = msgA.text || '';
+    const textB = msgB.text || '';
+    const base = textB.length > textA.length ? msgB : msgA;
+    const res = { ...base };
+    if (!res.id && (msgA.id || msgB.id)) res.id = msgA.id || msgB.id;
+    return res;
+  }
+
+  function solveLCS(A, B) {
+    const m = A.length;
+    const n = B.length;
+    const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (sameMsg(A[i - 1], B[j - 1])) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+      }
+    }
+    const maxLen = dp[m][n];
+    if (maxLen === 0) return { maxLen: 0, tailAnchors: [], headAnchors: [], multiple: false };
+
+    let i = m;
+    let j = n;
+    const tailAnchors = [];
+    while (i > 0 && j > 0) {
+      if (sameMsg(A[i - 1], B[j - 1]) && dp[i][j] === dp[i - 1][j - 1] + 1) {
+        tailAnchors.push([i - 1, j - 1]);
+        i--;
+        j--;
+      } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+        i--;
+      } else {
+        j--;
+      }
+    }
+    tailAnchors.reverse();
+
+    const dpRev = Array.from({ length: m + 2 }, () => new Int32Array(n + 2));
+    for (let ri = m; ri >= 1; ri--) {
+      for (let rj = n; rj >= 1; rj--) {
+        if (sameMsg(A[ri - 1], B[rj - 1])) {
+          dpRev[ri][rj] = dpRev[ri + 1][rj + 1] + 1;
+        } else {
+          dpRev[ri][rj] = Math.max(dpRev[ri + 1][rj], dpRev[ri][rj + 1]);
+        }
+      }
+    }
+    i = 1;
+    j = 1;
+    const headAnchors = [];
+    while (i <= m && j <= n) {
+      if (sameMsg(A[i - 1], B[j - 1]) && dpRev[i][j] === dpRev[i + 1][j + 1] + 1) {
+        headAnchors.push([i - 1, j - 1]);
+        i++;
+        j++;
+      } else if (dpRev[i + 1][j] >= dpRev[i][j + 1]) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+
+    const multiple = JSON.stringify(tailAnchors) !== JSON.stringify(headAnchors);
+    return { maxLen, tailAnchors, headAnchors, multiple };
   }
 
   // The page may only render part of a long chat. Merge the freshly scraped window
   // onto what is already stored (handles tail, middle, head, and superset windows).
-  function merge(prev, fresh) {
-    if (!prev || !prev.length) return fresh ? fresh.slice() : [];
-    if (!fresh || !fresh.length) return prev ? prev.slice() : [];
+  function mergeDetailed(prev, fresh, opts) {
+    opts = opts || {};
+    const P = prev ? prev.length : 0;
+    const F = fresh ? fresh.length : 0;
+    if (!P && !F) return { messages: [], kind: 'empty', overlap: 0, ambiguous: false, gap: false };
+    if (!P) return { messages: fresh.map((m) => ({ ...m })), kind: 'fresh', overlap: 0, ambiguous: false, gap: false };
+    if (!F) return { messages: prev.map((m) => ({ ...m })), kind: 'prev', overlap: 0, ambiguous: false, gap: false };
 
-    const P = prev.length;
-    const F = fresh.length;
+    // Fast path 1: superset (fresh contains prev as an ordered subsequence)
+    let sj = 0;
+    const subIdxs = [];
+    for (let i = 0; i < P; i++) {
+      while (sj < F && !sameMsg(prev[i], fresh[sj])) sj++;
+      if (sj >= F) break;
+      subIdxs.push(sj);
+      sj++;
+    }
+    if (subIdxs.length === P) {
+      const res = fresh.map((m) => ({ ...m }));
+      for (let i = 0; i < P; i++) {
+        res[subIdxs[i]] = pickLonger(prev[i], res[subIdxs[i]]);
+      }
+      return { messages: res, kind: 'superset', overlap: P, ambiguous: false, gap: false };
+    }
 
-    let bestK = null;
-    let bestScore = 0;
+    // Fast path 2: contiguous run (prev contains fresh as a contiguous run)
+    for (let i = 0; i <= P - F; i++) {
+      let match = true;
+      for (let k = 0; k < F; k++) {
+        if (!sameMsg(prev[i + k], fresh[k])) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        const res = prev.map((m) => ({ ...m }));
+        for (let k = 0; k < F; k++) {
+          res[i + k] = pickLonger(res[i + k], fresh[k]);
+        }
+        return { messages: res, kind: 'contiguous', overlap: F, ambiguous: false, gap: false };
+      }
+    }
 
-    // Search all possible offsets k where fresh[j] aligns with prev[k + j]
-    for (let k = -(F - 1); k < P; k++) {
-      let currentRun = 0;
-      let maxRun = 0;
-      let matches = 0;
-      const startJ = Math.max(0, -k);
-      const endJ = Math.min(F, P - k);
+    // Candidate regions
+    const candidateRegions = [];
+    const candSize = Math.min(P, 3 * F + 20);
+    if (opts.prefer === 'head') {
+      candidateRegions.push({ region: prev.slice(0, candSize), offset: 0 });
+      if (candSize < P) candidateRegions.push({ region: prev, offset: 0 });
+    } else if (opts.prefer === 'tail') {
+      const tailOffset = Math.max(0, P - candSize);
+      candidateRegions.push({ region: prev.slice(tailOffset), offset: tailOffset });
+      if (candSize < P) candidateRegions.push({ region: prev, offset: 0 });
+    } else {
+      if (candSize < P) {
+        candidateRegions.push({ region: prev.slice(0, candSize), offset: 0 });
+        const tailOffset = Math.max(0, P - candSize);
+        candidateRegions.push({ region: prev.slice(tailOffset), offset: tailOffset });
+      }
+      candidateRegions.push({ region: prev, offset: 0 });
+    }
 
-      for (let j = startJ; j < endJ; j++) {
-        const isPrevLast = (k + j === P - 1);
-        if (matchMsg(fresh[j], prev[k + j], isPrevLast, currentRun > 0)) {
-          matches++;
-          currentRun++;
-          if (currentRun > maxRun) maxRun = currentRun;
-        } else {
-          currentRun = 0;
+    let bestGapResult = null;
+    for (const { region, offset } of candidateRegions) {
+      const fpCounts = new Map();
+      for (const m of region) {
+        const fp = fingerprint(m);
+        fpCounts.set(fp, (fpCounts.get(fp) || 0) + 1);
+      }
+      function isLowInfo(m) {
+        if (!m) return true;
+        if (m.id) return false;
+        const norm = normText(m.text);
+        return norm.length <= 20 || (fpCounts.get(fingerprint(m)) || 0) > 1;
+      }
+
+      const lcsRes = solveLCS(region, fresh);
+      if (lcsRes.maxLen === 0) continue;
+
+      let anchors = lcsRes.tailAnchors;
+      if (lcsRes.multiple) {
+        const tailLow = lcsRes.tailAnchors.every(([pIdx]) => isLowInfo(region[pIdx]));
+        const headLow = lcsRes.headAnchors.every(([pIdx]) => isLowInfo(region[pIdx]));
+        if (tailLow && headLow) {
+          return { messages: prev.map((m) => ({ ...m })), kind: 'ambiguous', overlap: lcsRes.maxLen, ambiguous: true, gap: false };
+        }
+        if (opts.prefer === 'head') {
+          if (!headLow) anchors = lcsRes.headAnchors;
+          else if (!tailLow) anchors = lcsRes.tailAnchors;
+          else return { messages: prev.map((m) => ({ ...m })), kind: 'ambiguous', overlap: lcsRes.maxLen, ambiguous: true, gap: false };
         }
       }
 
-      if (maxRun > 0) {
-        // Require two consecutive matches when possible to avoid false anchors on repeated texts
-        const canRequireTwo = P >= 2 && F >= 2 && (endJ - startJ) >= 2;
-        if (canRequireTwo && maxRun < 2) continue;
-
-        const score = maxRun * 1000 + matches;
-        if (score > bestScore) {
-          bestScore = score;
-          bestK = k;
+      // Anchor count check
+      if (anchors.length < 2) {
+        const isSingleMsgWindow = P === 1 || F === 1;
+        const [candP0, f0] = anchors[0];
+        const absP0 = offset + candP0;
+        const isEdge = (absP0 === 0 && f0 === F - 1) || (absP0 === P - 1 && f0 === 0);
+        const isUnique = (fpCounts.get(fingerprint(region[candP0])) || 0) === 1;
+        if (!isSingleMsgWindow && (!isEdge || !isUnique)) {
+          continue;
         }
       }
-    }
 
-    // No overlap at all: keep prev unless fresh is larger
-    if (bestK === null) {
-      return fresh.length > prev.length ? fresh : prev;
-    }
+      const absAnchors = anchors.map(([candP, fIdx]) => [offset + candP, fIdx]);
+      const pFirst = absAnchors[0][0];
+      const fFirst = absAnchors[0][1];
+      const pLast = absAnchors[absAnchors.length - 1][0];
+      const fLast = absAnchors[absAnchors.length - 1][1];
 
-    const k = bestK;
-
-    // Tail window or superset (fresh extends to or past the end of prev)
-    if (k + F >= P) {
-      if (k <= 0) {
-        return fresh;
+      // Gaps check: unmatched messages before first anchor or after last anchor must touch matching end
+      if (fFirst > 0 && pFirst > 0) {
+        bestGapResult = { messages: prev.map((m) => ({ ...m })), kind: 'gap', overlap: absAnchors.length, ambiguous: false, gap: true };
+        continue;
       }
-      return prev.slice(0, k).concat(fresh);
+      if (fLast < F - 1 && pLast < P - 1) {
+        bestGapResult = { messages: prev.map((m) => ({ ...m })), kind: 'gap', overlap: absAnchors.length, ambiguous: false, gap: true };
+        continue;
+      }
+
+      const out = [];
+      let isAmbiguous = false;
+
+      // Messages before first anchor
+      if (fFirst > 0 && pFirst === 0) {
+        for (let k = 0; k < fFirst; k++) out.push({ ...fresh[k] });
+      } else if (pFirst > 0) {
+        for (let k = 0; k < pFirst; k++) out.push({ ...prev[k] });
+      }
+
+      // Anchors and intervening messages
+      for (let idx = 0; idx < absAnchors.length; idx++) {
+        const [pIdx, fIdx] = absAnchors[idx];
+        out.push(pickLonger(prev[pIdx], fresh[fIdx]));
+
+        if (idx < absAnchors.length - 1) {
+          const [nextP, nextF] = absAnchors[idx + 1];
+          const unP = prev.slice(pIdx + 1, nextP);
+          const unF = fresh.slice(fIdx + 1, nextF);
+          if (unP.length > 0 || unF.length > 0) {
+            const rolesP = unP.map((m) => m.role).join(',');
+            const rolesF = unF.map((m) => m.role).join(',');
+            if (rolesP === rolesF && unP.length === unF.length) {
+              for (let k = 0; k < unP.length; k++) {
+                out.push(pickLonger(unP[k], unF[k]));
+              }
+            } else {
+              isAmbiguous = true;
+              for (const m of unP) out.push({ ...m });
+              for (const m of unF) out.push({ ...m });
+            }
+          }
+        }
+      }
+
+      // Messages after last anchor
+      if (fLast < F - 1 && pLast === P - 1) {
+        for (let k = fLast + 1; k < F; k++) out.push({ ...fresh[k] });
+      } else if (pLast < P - 1) {
+        for (let k = pLast + 1; k < P; k++) out.push({ ...prev[k] });
+      }
+
+      let kind = 'overlap';
+      if (fFirst > 0 && fLast === F - 1 && pLast < P - 1) kind = 'head';
+      else if (fFirst === 0 && fLast < F - 1 && pFirst > 0) kind = 'tail';
+      else if (fFirst === 0 && fLast === F - 1 && (pFirst > 0 || pLast < P - 1)) kind = 'middle';
+
+      return { messages: out, kind, overlap: absAnchors.length, ambiguous: isAmbiguous, gap: false };
     }
 
-    // Head window (fresh starts before prev and ends inside prev)
-    if (k <= 0) {
-      return fresh.concat(prev.slice(k + F));
-    }
+    return bestGapResult || { messages: prev.map((m) => ({ ...m })), kind: 'no-overlap', overlap: 0, ambiguous: false, gap: true };
+  }
 
-    // Middle window (fresh is fully inside prev)
-    return prev.slice(0, k).concat(fresh).concat(prev.slice(k + F));
+  function merge(prev, fresh, opts) {
+    return mergeDetailed(prev, fresh, opts).messages;
   }
 
   CTX.scrape = scrape;
   CTX.diagnose = diagnose;
+  CTX.mergeDetailed = mergeDetailed;
   CTX.merge = merge;
   CTX.normText = normText;
+  CTX.sameMsg = sameMsg;
+  CTX.fingerprint = fingerprint;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -380,6 +380,11 @@ button {
   color: var(--ok);
 }
 
+.statusPill.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 .currentMetaRow {
   display: flex;
   align-items: center;
@@ -501,6 +506,18 @@ button {
   font-size: 12px;
   color: var(--text-2);
   max-width: 280px;
+}
+
+.reloadPromptBox {
+  margin-top: var(--space-1);
+  display: flex;
+  justify-content: center;
+}
+
+.reloadTabBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* --------------------------------------------------------------------------
@@ -707,6 +724,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
 }
 
 .savedSectionHeader {
@@ -754,7 +773,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 175px;
+  flex: 1;
+  min-height: 120px;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
@@ -831,10 +852,37 @@ button {
   background: var(--ink-1);
   border-top: 1px solid var(--line);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 48px;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
+
+/* .stickyManagerBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 7px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+} */
+
+/* .stickyManagerBtn:hover {
+  background: var(--ink-3);
+  border-color: var(--line-strong);
+  color: var(--text);
+} */
+
+/* .stickyManagerBtn svg {
+  color: var(--signature);
+} */
 
 .footerActionGroup {
   display: flex;
@@ -845,6 +893,37 @@ button {
 
 .copyActionBtn {
   flex: 1;
+}
+
+.deleteActionBtn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: var(--radius-control);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  color: var(--danger);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.deleteActionBtn:hover {
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--danger);
+}
+
+.deleteActionBtn:active {
+  transform: scale(0.96);
+}
+
+.deleteActionBtn svg {
+  width: 17px;
+  height: 17px;
 }
 
 /* --------------------------------------------------------------------------
@@ -1000,4 +1079,127 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+/* Info Icon Button & Optional Tag */
+.fieldLabelGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.infoHelpBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  padding: 1px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.infoHelpBtn:hover {
+  color: var(--signature);
+  background: var(--ink-2);
+}
+
+.infoHelpBtn:focus-visible {
+  outline: 2px solid var(--action);
+}
+
+.optionalTag {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* Notes Info Modal Popover Overlay */
+.infoOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 100;
+  backdrop-filter: blur(2px);
+}
+
+.infoOverlay[hidden] {
+  display: none !important;
+}
+
+.infoCard {
+  background: var(--ink-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--floating-shadow);
+  width: 100%;
+  max-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.infoCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.infoCardTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.infoCardTitle {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.infoCardBody {
+  padding: 14px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.infoCardBody .infoLead {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.infoStepMini {
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.infoStepMini strong {
+  color: var(--text);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.infoCardFooter {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
 }

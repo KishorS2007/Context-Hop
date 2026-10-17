@@ -227,7 +227,12 @@
 
               <div class="formSection">
                 <div class="fieldLabelRow">
-                  <label for="handoffNotes" class="fieldLabel">Your summary / notes (optional)</label>
+                  <div class="fieldLabelGroup">
+                    <label for="handoffNotes" class="fieldLabel">Handoff summary & instructions <span class="optionalTag">(optional)</span></label>
+                    <button type="button" id="notesInfoBtn" class="infoHelpBtn" aria-label="How does this box work?" title="How does this box work?">
+                      <svg width="14" height="14" aria-hidden="true"><use href="../assets/icons.svg#icon-info"></use></svg>
+                    </button>
+                  </div>
                   <span id="notesCharCount" class="charCount">0 characters</span>
                 </div>
                 <textarea id="handoffNotes" rows="5" class="handoffTextarea" placeholder="Goal, current state, next step. Or paste the AI's own handoff summary here…"></textarea>
@@ -410,6 +415,47 @@
         <button type="button" id="conflictSkipBtn" class="btn secondary">Skip</button>
         <button type="button" id="conflictOverwriteAllBtn" class="btn secondary">Overwrite all</button>
         <button type="button" id="conflictSkipAllBtn" class="btn secondary">Skip all</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Handoff Summary & Instructions Explanatory Modal -->
+  <dialog id="notesInfoModal" class="modalDialog" aria-labelledby="notesInfoTitle">
+    <div class="dialogContent">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h3 id="notesInfoTitle" style="display: flex; align-items: center; gap: 8px;">
+          <svg width="18" height="18" style="color: var(--signature);"><use href="../assets/icons.svg#icon-info"></use></svg>
+          How this box works
+        </h3>
+        <button type="button" id="closeNotesInfoModalBtn" class="iconBtn" aria-label="Close dialog">
+          <svg width="16" height="16" aria-hidden="true"><use href="../assets/icons.svg#icon-close"></use></svg>
+        </button>
+      </div>
+
+      <p>This box is <strong>not</strong> a personal notepad. It gives your new AI session the <strong>top-priority context</strong> it needs to continue your project without missing a beat.</p>
+
+      <div style="background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+        <div>
+          <strong style="color: var(--text);">1. Priority #1 (Never Dropped)</strong>
+          <p style="font-size: 12px; margin-top: 2px;">When you copy a handoff, anything in this box is injected at the <strong>very top</strong> under <code>## Goal and summary</code>. Even when long conversations are compressed, this box is always kept word-for-word.</p>
+        </div>
+        <div>
+          <strong style="color: var(--text);">2. Recommended AI Workflow (Free)</strong>
+          <p style="font-size: 12px; margin-top: 2px;">Before you run out of messages in ChatGPT, Claude, Gemini, or Kimi:</p>
+          <ol style="font-size: 12px; margin: 4px 0 0 16px; color: var(--text-2); display: flex; flex-direction: column; gap: 2px;">
+            <li>Click <em>"Copy a prompt that asks the AI for a summary"</em> below.</li>
+            <li>Paste it into your active AI chat and press Send.</li>
+            <li>Copy the AI's 5-point reply and paste it right into this box.</li>
+          </ol>
+        </div>
+        <div>
+          <strong style="color: var(--text);">3. Or Custom Instructions</strong>
+          <p style="font-size: 12px; margin-top: 2px;">You can also manually write architectural decisions, stack rules, or tell the new AI: <em>"Ignore the older Python code, focus only on the TypeScript auth middleware."</em></p>
+        </div>
+      </div>
+
+      <div class="dialogActions" style="justify-content: flex-end; margin-top: 4px;">
+        <button type="button" id="ackNotesInfoModalBtn" class="btn primary small">Got it</button>
       </div>
     </div>
   </dialog>

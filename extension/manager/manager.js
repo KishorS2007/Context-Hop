@@ -427,8 +427,23 @@
       // Render sidebar list
       renderList();
 
-      // Handle selection
-      if (selectedKey && allChats.some((c) => c.key === selectedKey)) {
+      // Handle selection: check URL query or hash first (e.g. manager.html?chat=key)
+      let initialKeyFromUrl = null;
+      try {
+        const urlParams = new URLSearchParams(window.location.search || window.location.hash.replace(/^#/, ''));
+        initialKeyFromUrl = urlParams.get('chat') || urlParams.get('key');
+      } catch (e) {}
+
+      if (initialKeyFromUrl && allChats.some((c) => c.key === initialKeyFromUrl)) {
+        const targetChat = allChats.find((c) => c.key === initialKeyFromUrl);
+        if (targetChat && activeSiteFilter !== 'all' && (targetChat.site || '').toLowerCase() !== activeSiteFilter) {
+          activeSiteFilter = 'all';
+          document.querySelectorAll('.chip').forEach((c) => {
+            c.classList.toggle('active', c.getAttribute('data-site') === 'all');
+          });
+        }
+        selectChat(initialKeyFromUrl);
+      } else if (selectedKey && allChats.some((c) => c.key === selectedKey)) {
         renderDetail(selectedKey);
       } else if (allChats.length > 0) {
         const sorted = getFilteredChats();
@@ -624,6 +639,14 @@
     currentConvPage = 1;
     renderList();
     renderDetail(key);
+
+    const listEl = $('chatList');
+    if (listEl) {
+      const activeRow = listEl.querySelector(`.chatRow[data-key="${key}"]`);
+      if (activeRow && typeof activeRow.scrollIntoView === 'function') {
+        activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
   }
 
   async function renderDetail(key) {
@@ -1165,6 +1188,32 @@
     showToast('Summary prompt copied.');
   });
 
+  // Handoff Notes Info Modal Dialog
+  const notesInfoBtn = $('notesInfoBtn');
+  const notesInfoModal = $('notesInfoModal');
+  const closeNotesInfoModalBtn = $('closeNotesInfoModalBtn');
+  const ackNotesInfoModalBtn = $('ackNotesInfoModalBtn');
+
+  if (notesInfoBtn && notesInfoModal && typeof notesInfoModal.showModal === 'function') {
+    notesInfoBtn.addEventListener('click', () => {
+      notesInfoModal.showModal();
+    });
+    const closeNotesModal = () => notesInfoModal.close();
+    if (closeNotesInfoModalBtn) closeNotesInfoModalBtn.addEventListener('click', closeNotesModal);
+    if (ackNotesInfoModalBtn) ackNotesInfoModalBtn.addEventListener('click', closeNotesModal);
+    notesInfoModal.addEventListener('click', (e) => {
+      const rect = notesInfoModal.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
+      ) {
+        notesInfoModal.close();
+      }
+    });
+  }
+
   // Export Handoff Markdown
   function exportHandoffMd() {
     const chat = allChats.find((c) => c.key === selectedKey);
@@ -1542,6 +1591,16 @@
   if (CTX.manager) {
     CTX.manager.switchTab = switchTab;
   }
+
+  window.addEventListener('popstate', () => {
+    try {
+      const p = new URLSearchParams(window.location.search || window.location.hash.replace(/^#/, ''));
+      const k = p.get('chat') || p.get('key');
+      if (k && allChats.some((c) => c.key === k)) {
+        selectChat(k);
+      }
+    } catch (e) {}
+  });
 
   // Initialize
   initUiPreferences();

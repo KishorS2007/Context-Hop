@@ -64,6 +64,8 @@
   let chats = [];
   let current = null;
   let currentKey = null;
+  let currentHandoffText = '';
+  let currentBudget = 5000;
   let notesTimer = null;
   let toastTimer = null;
   let copyResetTimer = null;
@@ -197,15 +199,41 @@
     return `saved ${Math.round(m / 1440)}d ago`;
   }
 
+  let activeTabInfo = { key: null, tab: null, needsRefresh: false, detectedSite: null };
+
+  function getSiteFromUrl(url) {
+    if (!url) return null;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
+      if (host.includes('claude.ai')) return 'claude';
+      if (host.includes('gemini.google.com')) return 'gemini';
+      if (host.includes('kimi.ai') || host.includes('kimi.com') || host.includes('kimi.moonshot.cn')) return 'kimi';
+    } catch (e) {}
+    return null;
+  }
+
   // --- Active Tab Identification ---
   function activeKey() {
     return new Promise((resolve) => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const t = tabs && tabs[0];
-        if (!t) return resolve(null);
+        if (!t) {
+          activeTabInfo = { key: null, tab: null, needsRefresh: false, detectedSite: null };
+          return resolve(null);
+        }
+        const site = getSiteFromUrl(t.url);
         chrome.tabs.sendMessage(t.id, { type: 'ctx:key' }, (r) => {
-          void chrome.runtime.lastError; // Not a supported site or no content script
-          resolve((r && r.key) || null);
+          const err = chrome.runtime.lastError;
+          if (r && r.key) {
+            activeTabInfo = { key: r.key, tab: t, needsRefresh: false, detectedSite: site || r.key.split(':')[0] };
+            resolve(r.key);
+          } else {
+            const needsRefresh = Boolean(site || err);
+            activeTabInfo = { key: null, tab: t, needsRefresh, detectedSite: site };
+            resolve(null);
+          }
         });
       });
     });
@@ -228,6 +256,40 @@
     const noTabCard = $('noActiveTabBox');
 
     if (!currentKey) {
+      if (activeTabInfo.detectedSite) {
+        // AI chat page detected, but content script not yet connected
+        if (card) card.hidden = false;
+        if (noTabCard) noTabCard.hidden = true;
+
+        const site = activeTabInfo.detectedSite;
+        const meta = getSiteMeta(site);
+        const chip = $('currentTabChip');
+        if (chip) updateSiteChip(chip, site, 20);
+
+        const titleEl = $('currentChatTitle');
+        if (titleEl) {
+          titleEl.textContent = (activeTabInfo.tab && activeTabInfo.tab.title) ? activeTabInfo.tab.title.slice(0, 50) : meta.name;
+        }
+
+        const statusPill = $('currentTabStatus');
+        if (statusPill) {
+          statusPill.textContent = 'Needs refresh';
+          statusPill.className = 'statusPill warn';
+        }
+
+        const msgCountEl = $('currentMsgCount');
+        const savedTimeEl = $('currentSavedTime');
+        if (msgCountEl) msgCountEl.textContent = 'Page needs reload';
+        if (savedTimeEl) savedTimeEl.textContent = 'to connect capture';
+
+        const capBtn = $('captureBtn');
+        if (capBtn) {
+          capBtn.disabled = false;
+          capBtn.textContent = 'Refresh page to capture';
+        }
+        return;
+      }
+
       if (card) card.hidden = true;
       if (noTabCard) noTabCard.hidden = false;
       return;
@@ -277,6 +339,12 @@
       msgCountEl.textContent = '0 messages';
       savedTimeEl.textContent = 'not saved yet';
     }
+
+    const capBtn = $('captureBtn');
+    if (capBtn && !capturing) {
+      capBtn.disabled = false;
+      capBtn.textContent = 'Capture chat';
+    }
   }
 
   // --- Data Loading ---
@@ -288,6 +356,7 @@
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
     if (all.settings && all.settings.budget) {
+      currentBudget = Number(all.settings.budget) || 5000;
       setBudgetValue(String(all.settings.budget));
     }
 
@@ -300,7 +369,7 @@
     } else if (chats.length) {
       select(chats[0]);
     } else {
-      $('detail').hidden = true;
+      if ($('detail')) $('detail').hidden = true;
     }
 
     $('autosaveNotice').hidden = Boolean(all.settings && all.settings.autosaveNoticeDismissed);
@@ -374,6 +443,11 @@
       item.appendChild(main);
 
       item.addEventListener('click', () => select(c));
+      item.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        openManager(c.key);
+      });
+      item.title = `${c.title || 'Untitled chat'} (Double-click to open in Manager)`;
       list.appendChild(item);
     }
   }
@@ -381,27 +455,32 @@
   // --- Chat Selection ---
   async function select(chat) {
     current = chat;
-    $('detail').hidden = false;
-    $('detailTitle').textContent = chat.title || 'Untitled chat';
+    if ($('detail')) $('detail').hidden = false;
+    if ($('detailTitle')) $('detailTitle').textContent = chat.title || 'Untitled chat';
 
     const meta = getSiteMeta(chat.site);
-    $('detailMeta').textContent = meta.name;
+    if ($('detailMeta')) $('detailMeta').textContent = meta.name;
 
     const nk = 'notes:' + chat.key;
     const storedNotes = (await chrome.storage.local.get(nk))[nk] || '';
-    $('notes').value = storedNotes;
+    if ($('notes')) $('notes').value = storedNotes;
 
     renderChatList();
-    preview();
+    preview(storedNotes);
   }
 
   // --- Live Preview & Token Meter ---
-  function preview() {
+  function preview(notesOverride) {
     if (!current) return;
-    const budgetVal = Number($('budget').value) || 5000;
-    const r = CTX.buildHandoff(current, { budget: budgetVal, notes: $('notes').value });
+    const b = $('budget');
+    const budgetVal = b ? (Number(b.value) || 5000) : currentBudget;
+    const n = $('notes');
+    const notesVal = n ? n.value : (notesOverride !== undefined ? notesOverride : '');
+    const r = CTX.buildHandoff(current, { budget: budgetVal, notes: notesVal });
 
-    $('preview').value = r.text;
+    currentHandoffText = r.text;
+    const prev = $('preview');
+    if (prev) prev.value = r.text;
 
     // Token Count Label
     const countLabel = $('tokenCountLabel');
@@ -531,6 +610,17 @@
       const t = tabs && tabs[0];
       if (!t) return showToast('No active tab.');
 
+      if (!currentKey && activeTabInfo.detectedSite) {
+        if (chrome.tabs && chrome.tabs.reload) {
+          chrome.tabs.reload(t.id);
+          showToast('Refreshing chat page to connect…');
+          setTimeout(() => window.close(), 500);
+        } else {
+          showToast('Please refresh the chat page (F5) to connect.');
+        }
+        return;
+      }
+
       setCapturing(true, false);
       const statusText = $('captureStatusText');
       if (statusText) statusText.textContent = 'Reading chat…';
@@ -609,36 +699,66 @@
   });
 
   // Notes Field
-  $('notes').addEventListener('input', () => {
-    preview();
-    clearTimeout(notesTimer);
-    notesTimer = setTimeout(() => {
-      if (current) {
-        chrome.storage.local.set({ ['notes:' + current.key]: $('notes').value });
-      }
-    }, 400);
-  });
+  const notesEl = $('notes');
+  if (notesEl) {
+    notesEl.addEventListener('input', () => {
+      preview();
+      clearTimeout(notesTimer);
+      notesTimer = setTimeout(() => {
+        if (current) {
+          chrome.storage.local.set({ ['notes:' + current.key]: notesEl.value });
+        }
+      }, 400);
+    });
+  }
 
   // Copy Handoff Prompt Helper
-  $('copyPrompt').addEventListener('click', async () => {
-    await copyText(SUMMARY_PROMPT);
-    showToast('Prompt copied. Paste it into your chat before switching.');
-  });
+  const copyPromptBtn = $('copyPrompt');
+  if (copyPromptBtn) {
+    copyPromptBtn.addEventListener('click', async () => {
+      await copyText(SUMMARY_PROMPT);
+      showToast('Prompt copied. Paste it into your chat before switching.');
+    });
+  }
+
+  // Notes Info Modal Popover
+  const notesInfoBtn = $('notesInfoBtn');
+  const notesInfoModal = $('notesInfoModal');
+  const closeNotesInfoBtn = $('closeNotesInfoBtn');
+  const ackNotesInfoBtn = $('ackNotesInfoBtn');
+
+  if (notesInfoBtn && notesInfoModal) {
+    notesInfoBtn.addEventListener('click', () => {
+      notesInfoModal.hidden = false;
+    });
+    const hideNotesModal = () => {
+      notesInfoModal.hidden = true;
+    };
+    if (closeNotesInfoBtn) closeNotesInfoBtn.addEventListener('click', hideNotesModal);
+    if (ackNotesInfoBtn) ackNotesInfoBtn.addEventListener('click', hideNotesModal);
+    notesInfoModal.addEventListener('click', (e) => {
+      if (e.target === notesInfoModal) hideNotesModal();
+    });
+  }
 
   // Toggle Preview Expand/Collapse
-  $('togglePreviewBtn').addEventListener('click', () => {
-    previewExpanded = !previewExpanded;
-    const wrapper = $('previewWrapper');
-    if (wrapper) {
-      wrapper.className = 'previewWrapper ' + (previewExpanded ? 'expanded' : 'collapsed');
-    }
-    $('togglePreviewBtn').textContent = previewExpanded ? 'Collapse preview' : 'Show full preview';
-  });
+  const togglePreviewBtn = $('togglePreviewBtn');
+  if (togglePreviewBtn) {
+    togglePreviewBtn.addEventListener('click', () => {
+      previewExpanded = !previewExpanded;
+      const wrapper = $('previewWrapper');
+      if (wrapper) {
+        wrapper.className = 'previewWrapper ' + (previewExpanded ? 'expanded' : 'collapsed');
+      }
+      togglePreviewBtn.textContent = previewExpanded ? 'Collapse preview' : 'Show full preview';
+    });
+  }
 
   // Primary Copy Action
   $('copy').addEventListener('click', async () => {
-    if (!$('preview').value) return showToast('No context to copy.');
-    await copyText($('preview').value);
+    const textToCopy = currentHandoffText || ($('preview') ? $('preview').value : '');
+    if (!textToCopy) return showToast('No context to copy.');
+    await copyText(textToCopy);
     triggerSignatureAnimation();
     showToast('Context copied. Ready to paste in new chat.');
   });
@@ -646,7 +766,9 @@
   // Export Markdown
   $('export').addEventListener('click', () => {
     if (!current) return showToast('No chat selected.');
-    const blob = new Blob([$('preview').value], { type: 'text/markdown' });
+    const textToExport = currentHandoffText || ($('preview') ? $('preview').value : '');
+    if (!textToExport) return showToast('No context to export.');
+    const blob = new Blob([textToExport], { type: 'text/markdown' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     const sanitizedTitle = (current.title || 'chat').replace(/[/\\?%*:|"<>]/g, '-').slice(0, 60);
@@ -667,7 +789,8 @@
         await chrome.storage.local.remove(['chat:' + current.key, 'notes:' + current.key]);
         showToast('Chat deleted.');
         current = null;
-        $('detail').hidden = true;
+        currentHandoffText = '';
+        if ($('detail')) $('detail').hidden = true;
         await load();
       },
       'Delete permanently'
@@ -703,24 +826,62 @@
         await chrome.storage.local.remove(keys);
         showToast('All saved chats cleared.');
         current = null;
-        $('detail').hidden = true;
+        currentHandoffText = '';
+        if ($('detail')) $('detail').hidden = true;
         await load();
       },
       'Clear all data'
     );
   });
 
-  // Open Manager
-  function openManager() {
-    if (chrome.runtime && chrome.runtime.openOptionsPage) {
+  // Open Manager (optionally focusing on a specific chat key)
+  function openManager(chatKey) {
+    const managerUrl = chrome.runtime.getURL('manager/manager.html');
+    const targetUrl = chatKey ? `${managerUrl}?chat=${encodeURIComponent(chatKey)}` : managerUrl;
+
+    if (chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ url: `${managerUrl}*` }, (tabs) => {
+        if (tabs && tabs.length > 0) {
+          const existingTab = tabs[0];
+          chrome.tabs.update(existingTab.id, { url: targetUrl, active: true }, () => {
+            if (chrome.windows && chrome.windows.update && existingTab.windowId) {
+              chrome.windows.update(existingTab.windowId, { focused: true });
+            }
+          });
+        } else {
+          chrome.tabs.create({ url: targetUrl });
+        }
+      });
+    } else if (chrome.runtime && chrome.runtime.openOptionsPage && !chatKey) {
       chrome.runtime.openOptionsPage();
     } else {
-      window.open(chrome.runtime.getURL('manager/manager.html'));
+      window.open(targetUrl);
     }
   }
 
   $('manageBtn').addEventListener('click', openManager);
   $('seeAllBtn').addEventListener('click', openManager);
+
+  const openManagerStickyBtn = $('openManagerStickyBtn');
+  if (openManagerStickyBtn) {
+    openManagerStickyBtn.addEventListener('click', openManager);
+  }
+
+  const reloadTabBtn = $('reloadTabBtn');
+  if (reloadTabBtn) {
+    reloadTabBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const t = tabs && tabs[0];
+        if (t && t.id && chrome.tabs && chrome.tabs.reload) {
+          chrome.tabs.reload(t.id);
+          showToast('Refreshing chat tab…');
+          setTimeout(() => window.close(), 500);
+        } else {
+          showToast('Press F5 to refresh the chat page.');
+        }
+      });
+    });
+  }
 
   // Search filter
   $('popupSearch').addEventListener('input', () => {
