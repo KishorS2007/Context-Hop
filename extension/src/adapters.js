@@ -29,6 +29,46 @@
     return Boolean(autosave.default);
   };
 
+  function isVisible(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true')) return false;
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.hasAttribute && el.hasAttribute('hidden')) return false;
+    if (el.closest) {
+      if (el.closest('[aria-hidden="true"], [hidden], [disabled]')) return false;
+    }
+
+    const win = el.ownerDocument ? el.ownerDocument.defaultView : (typeof window !== 'undefined' ? window : null);
+    if (win && typeof win.getComputedStyle === 'function') {
+      try {
+        const cs = win.getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+        if (cs.width === '0px' && cs.height === '0px') return false;
+        if (cs.opacity === '0') return false;
+      } catch (e) {}
+    }
+    if (el.style) {
+      if (el.style.display === 'none' || el.style.visibility === 'hidden') return false;
+      if (el.style.width === '0px' && el.style.height === '0px') return false;
+      if (el.style.width === '0' && el.style.height === '0') return false;
+      if (el.style.opacity === '0') return false;
+    }
+
+    const isJsdom = win && win.navigator && /jsdom/i.test(win.navigator.userAgent || '');
+    if (!isJsdom) {
+      const hasSize = el.offsetWidth > 0 || el.offsetHeight > 0 || (el.getClientRects && el.getClientRects().length > 0);
+      if (!hasSize) return false;
+    } else {
+      const descW = Object.getOwnPropertyDescriptor(el, 'offsetWidth');
+      const descH = Object.getOwnPropertyDescriptor(el, 'offsetHeight');
+      if (descW && descH && el.offsetWidth === 0 && el.offsetHeight === 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  CTX.isVisible = isVisible;
+
   CTX.adapters = [
     {
       id: 'chatgpt',
@@ -48,10 +88,19 @@
       assistantContent: ['.markdown'],
       userPlain: true,
       chatId: idFrom(/\/c\/([\w-]+)/),
-      streaming: () =>
-        !!document.querySelector(
-          '[data-testid="stop-button"], [data-talvt-turn-state]:not([data-talvt-turn-state="complete"])'
-        ),
+      streaming: () => {
+        const btn = document.querySelector('[data-testid="stop-button"]');
+        if (btn && isVisible(btn)) {
+          CTX.lastStreamingInfo = {
+            selector: '[data-testid="stop-button"]',
+            tag: btn.tagName.toLowerCase(),
+            ariaLabel: btn.getAttribute('aria-label') || '',
+            visible: true,
+          };
+          return true;
+        }
+        return false;
+      },
     },
     {
       id: 'claude',
@@ -63,8 +112,35 @@
       assistantContent: ['[data-perf-reply-text]'],
       userPlain: true,
       chatId: idFrom(/\/chat\/([\w-]+)/),
-      streaming: () =>
-        !!document.querySelector('[data-is-streaming="true"], [data-perf-row-streaming="true"]'),
+      streaming: () => {
+        const rows = document.querySelectorAll('[data-testid="transcript-row"], [data-testid="assistant-message"]');
+        const lastEl = rows.length ? rows[rows.length - 1] : document.body;
+        if (!lastEl) return false;
+
+        const lastRow = (lastEl.closest && lastEl.closest('[data-testid="transcript-row"]')) || lastEl;
+        const streamEl = lastRow.matches && lastRow.matches('[data-is-streaming="true"], [data-perf-row-streaming="true"]')
+          ? lastRow
+          : (lastRow.querySelector ? lastRow.querySelector('[data-is-streaming="true"], [data-perf-row-streaming="true"]') : null);
+
+        if (!streamEl || !isVisible(streamEl)) return false;
+
+        const now = Date.now();
+        const text = (lastRow.textContent || '').trim();
+        if (text !== CTX._claudeLastText) {
+          CTX._claudeLastText = text;
+          CTX._claudeLastChangeTime = now;
+        } else if (CTX._claudeLastChangeTime > 0 && now - CTX._claudeLastChangeTime >= 3000) {
+          return false;
+        }
+
+        CTX.lastStreamingInfo = {
+          selector: (streamEl.getAttribute && streamEl.getAttribute('data-is-streaming')) ? '[data-is-streaming="true"]' : '[data-perf-row-streaming="true"]',
+          tag: streamEl.tagName.toLowerCase(),
+          ariaLabel: (streamEl.getAttribute && streamEl.getAttribute('aria-label')) || '',
+          visible: true,
+        };
+        return true;
+      },
     },
     {
       id: 'gemini',
@@ -79,7 +155,24 @@
         'message-content',
       ],
       chatId: idFrom(/(?:^|\/)(?:u\/\d+\/)?app\/([\w-]+)/),
-      streaming: () => !!document.querySelector('[aria-label*="Stop"]'),
+      streaming: () => {
+        const btns = document.querySelectorAll('button, [role="button"]');
+        for (const btn of btns) {
+          if (!isVisible(btn)) continue;
+          if (btn.closest && btn.closest('user-query, model-response, [data-test-id*="message"]')) continue;
+          const label = (btn.getAttribute('aria-label') || btn.getAttribute('data-tooltip') || btn.textContent || '').trim();
+          if (/^stop\s*(response|generation|generating)?$/i.test(label) || /stop\s+(response|generation|generating)/i.test(label)) {
+            CTX.lastStreamingInfo = {
+              selector: 'button[aria-label*="Stop"]',
+              tag: btn.tagName.toLowerCase(),
+              ariaLabel: label,
+              visible: true,
+            };
+            return true;
+          }
+        }
+        return false;
+      },
       scrollContainer: [
         'infinite-scroller[data-test-id="chat-history-container"]',
         'infinite-scroller',

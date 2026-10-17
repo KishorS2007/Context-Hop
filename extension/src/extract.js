@@ -211,26 +211,31 @@
     });
   }
 
-  function extractId(el) {
+  function extractId(el, role, adapter) {
     if (!el || el.nodeType !== 1) return null;
     if (el.hasAttribute('data-message-id')) return el.getAttribute('data-message-id');
     if (el.hasAttribute('data-chatgpt-search-unit-key')) return el.getAttribute('data-chatgpt-search-unit-key');
     if (el.hasAttribute('data-content-search-unit-key')) return el.getAttribute('data-content-search-unit-key');
-    if (el.hasAttribute('data-turn-key')) return el.getAttribute('data-turn-key');
-    const tid = el.getAttribute('data-testid');
-    if (tid && /^conversation-turn-\d+/.test(tid)) return tid;
-
-    const unitAncestor = el.closest('[data-message-id], [data-chatgpt-search-unit-key], [data-turn-key]');
+    const unitAncestor = el.closest('[data-message-id], [data-chatgpt-search-unit-key], [data-content-search-unit-key]');
     if (unitAncestor) {
       return (
         unitAncestor.getAttribute('data-message-id') ||
         unitAncestor.getAttribute('data-chatgpt-search-unit-key') ||
-        unitAncestor.getAttribute('data-turn-key')
+        unitAncestor.getAttribute('data-content-search-unit-key')
       );
     }
-    const turnAncestor = el.closest('article[data-testid*="conversation-turn"], [data-testid^="conversation-turn"]');
+
+    // A turn key identifies a user/assistant turn, not necessarily a message:
+    // some ChatGPT DOMs place multiple assistant message elements inside one
+    // turn. Include the role-local index so distinct messages do not share an
+    // identity and collapse when overlapping virtualized windows are merged.
+    const turnAncestor = el.closest('[data-turn-key], article[data-testid*="conversation-turn"], [data-testid^="conversation-turn"]');
     if (turnAncestor) {
-      return turnAncestor.getAttribute('data-testid') || turnAncestor.getAttribute('data-message-id');
+      const turnId = turnAncestor.getAttribute('data-turn-key') || turnAncestor.getAttribute('data-testid');
+      const roleSelector = role === 'user' ? adapter.user.join(',') : adapter.assistant.join(',');
+      const roleMessages = outermost(Array.from(turnAncestor.querySelectorAll(roleSelector)));
+      const roleIndex = Math.max(0, roleMessages.indexOf(el));
+      return `${turnId}:${role}:${roleIndex}`;
     }
     return null;
   }
@@ -264,7 +269,7 @@
       }
       const text = CTX.redact ? CTX.redact(raw) : raw;
       if (text) {
-        const id = extractId(el);
+        const id = extractId(el, role, adapter);
         const msg = { role, text };
         if (id) msg.id = id;
         out.push(msg);
@@ -505,6 +510,22 @@
       }
 
       const absAnchors = anchors.map(([candP, fIdx]) => [offset + candP, fIdx]);
+      // Repeated low-information text can produce a plausible but wrong LCS
+      // alignment (for example, several identical "continue" turns). Do not
+      // silently drop a turn when one of those repeated values anchors a window.
+      const freshCounts = new Map();
+      for (const m of fresh) {
+        const fp = fingerprint(m);
+        freshCounts.set(fp, (freshCounts.get(fp) || 0) + 1);
+      }
+      const repeatedAnchor = absAnchors.some(([pIdx, fIdx]) => {
+        const m = prev[pIdx];
+        const fp = fingerprint(m);
+        return isLowInfo(m) && ((fpCounts.get(fp) || 0) > 1 || (freshCounts.get(fp) || 0) > 1);
+      });
+      if (repeatedAnchor) {
+        return { messages: prev.map((m) => ({ ...m })), kind: 'ambiguous', overlap: absAnchors.length, ambiguous: true, gap: false };
+      }
       const pFirst = absAnchors[0][0];
       const fFirst = absAnchors[0][1];
       const pLast = absAnchors[absAnchors.length - 1][0];
@@ -542,7 +563,8 @@
           if (unP.length > 0 || unF.length > 0) {
             const rolesP = unP.map((m) => m.role).join(',');
             const rolesF = unF.map((m) => m.role).join(',');
-            if (rolesP === rolesF && unP.length === unF.length) {
+            const positionsMatch = unP.length === unF.length && unP.every((m, k) => sameMsg(m, unF[k]));
+            if (rolesP === rolesF && positionsMatch) {
               for (let k = 0; k < unP.length; k++) {
                 out.push(pickLonger(unP[k], unF[k]));
               }

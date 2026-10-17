@@ -221,6 +221,13 @@
     if (!firstMsg) return null;
 
     const rawCandidates = [];
+    // Prefer containers declared by a site adapter. Some chat apps render the
+    // transcript inside a custom scroller that is not an obvious message ancestor.
+    for (const selector of adapter.scrollContainer || []) {
+      try {
+        rawCandidates.push(...document.querySelectorAll(selector));
+      } catch (e) {}
+    }
     let cur = firstMsg.parentElement;
     while (cur && cur !== document.body && cur !== document.documentElement) {
       rawCandidates.push(cur);
@@ -296,33 +303,54 @@
     });
   }
 
-  async function capture() {
+  function findLastAssistantEl(ad) {
+    if (!ad || !ad.assistant) return null;
+    const sel = ad.assistant.join(',');
+    const els = document.querySelectorAll(sel);
+    if (!els.length) return null;
+    return els[els.length - 1];
+  }
+
+  function hashString(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+      h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(16);
+  }
+
+  function sampleAssistantEl(el, ad) {
+    if (!el) return { text: '', length: 0, hash: '' };
+    let target = el;
+    if (ad && ad.assistantContent && el.querySelector) {
+      for (const s of ad.assistantContent) {
+        const found = el.querySelector(s);
+        if (found) { target = found; break; }
+      }
+    }
+    const text = (target.innerText || target.textContent || '').trim().replace(/\s+/g, ' ');
+    return {
+      text,
+      length: text.length,
+      hash: hashString(text),
+    };
+  }
+
+  async function capture(opts = {}) {
     cancelCaptureRequested = false;
+    const force = Boolean(opts && opts.force);
     const chatId = adapter.chatId();
     if (!chatId) return { ok: false, error: 'This is not a saved chat yet. Send a message first.' };
 
-    if (adapter.streaming && adapter.streaming()) {
-      return { ok: false, error: 'The reply is still streaming. Try again in a moment.' };
-    }
+    const key = adapter.id + ':' + chatId;
+    const sk = 'chat:' + key;
 
     // 1. Initial scrape before capture starts
-    const fresh = CTX.scrape(adapter);
+    let fresh = CTX.scrape(adapter);
     if (!fresh.length) {
       const matched = CTX.diagnose(adapter);
       return { ok: false, error: 'No messages found', matched };
     }
-
-    // Stability check before capture starts (once at the start)
-    if (STREAM_CHECK_MS > 0) {
-      await new Promise((r) => setTimeout(r, STREAM_CHECK_MS));
-      const fresh2 = CTX.scrape(adapter);
-      if (hashOf(fresh) !== hashOf(fresh2)) {
-        return { ok: false, error: 'The reply is still streaming. Try again in a moment.' };
-      }
-    }
-
-    const key = adapter.id + ':' + chatId;
-    const sk = 'chat:' + key;
 
     let initialCount = 0;
     let storedBeforeCapture = null;
@@ -331,6 +359,154 @@
       storedBeforeCapture = prevData;
       initialCount = (prevData && prevData.messages && prevData.messages.length) || 0;
     } catch (e) {}
+
+    // Quick save what is rendered first before any streaming/settle checks
+    await runExclusive(key, async () => {
+      const prev = (await chrome.storage.local.get(sk))[sk];
+      let messages = CTX.merge(prev && prev.messages, fresh);
+      if (prev && prev.messages && messages.length < prev.messages.length) {
+        messages = prev.messages;
+      }
+      const hash = hashOf(messages);
+      if (!prev || prev.hash !== hash) {
+        await chrome.storage.local.set({
+          [sk]: {
+            key,
+            site: adapter.id,
+            siteName: adapter.name,
+            title: prev && prev.titleEdited ? prev.title : titleOf(messages),
+            titleEdited: Boolean(prev && prev.titleEdited),
+            url: location.href,
+            updatedAt: Date.now(),
+            messages,
+            hash,
+          },
+        });
+      }
+    });
+
+    let debugCapture = false;
+    try {
+      debugCapture = typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('ui:debugCapture') === '1';
+    } catch (e) {}
+    const stepLogs = [];
+
+    // Streaming and settled checks (skipped if force is true)
+    if (!force) {
+      if (adapter.streaming && adapter.streaming()) {
+        const info = CTX.lastStreamingInfo || {
+          selector: 'adapter.streaming()',
+          tag: 'unknown',
+          ariaLabel: '',
+          visible: true,
+        };
+        console.debug('[Context Handoff] Streaming check failed (flag):', info);
+        if (debugCapture) {
+          stepLogs.push({ type: 'streaming-fail', reason: 'flag', info });
+          CTX.debugCaptureLog = stepLogs;
+        }
+        return {
+          ok: false,
+          error: 'Still streaming (stop button visible)',
+          reason: 'flag',
+          streaming: true,
+          info,
+        };
+      }
+
+      // 3. "Last reply settled" check on the last assistant message
+      const lastAssistantEl = findLastAssistantEl(adapter);
+      if (lastAssistantEl) {
+        const SAMPLE_INTERVAL_MS = CTX.SETTLE_SAMPLE_MS !== undefined ? CTX.SETTLE_SAMPLE_MS : 400;
+        const MAX_SETTLE_MS = CTX.SETTLE_MAX_MS !== undefined ? CTX.SETTLE_MAX_MS : 10000;
+        let prevSample = sampleAssistantEl(lastAssistantEl, adapter);
+        let consecutiveMatches = 1;
+        let deltaChars = 0;
+        let hasGrown = false;
+        const settleStart = Date.now();
+
+        while (Date.now() - settleStart < MAX_SETTLE_MS) {
+          await new Promise((r) => setTimeout(r, SAMPLE_INTERVAL_MS));
+          const currentEl = findLastAssistantEl(adapter);
+          const currentSample = sampleAssistantEl(currentEl, adapter);
+          if (currentSample.length === prevSample.length && currentSample.hash === prevSample.hash) {
+            consecutiveMatches++;
+            if (consecutiveMatches >= 3) {
+              break;
+            }
+          } else {
+            hasGrown = true;
+            deltaChars = Math.abs(currentSample.length - prevSample.length);
+            consecutiveMatches = 1;
+            prevSample = currentSample;
+            try {
+              chrome.runtime.sendMessage({
+                type: 'ctx:captureProgress',
+                phase: 'waiting',
+                message: 'Waiting for the reply to finish...',
+              });
+            } catch (e) {}
+          }
+        }
+
+        if (consecutiveMatches < 3) {
+          let lastAssistantIdx = -1;
+          for (let i = fresh.length - 1; i >= 0; i--) {
+            if (fresh[i].role === 'assistant') {
+              lastAssistantIdx = i;
+              break;
+            }
+          }
+          if (lastAssistantIdx === -1) lastAssistantIdx = fresh.length - 1;
+          console.debug('[Context Handoff] Streaming check failed (start-unstable):', {
+            index: lastAssistantIdx,
+            deltaChars,
+          });
+          if (debugCapture) {
+            stepLogs.push({
+              type: 'streaming-fail',
+              reason: 'start-unstable',
+              index: lastAssistantIdx,
+              deltaChars,
+            });
+            CTX.debugCaptureLog = stepLogs;
+          }
+          return {
+            ok: false,
+            error: 'Still streaming (last reply changed)',
+            reason: 'start-unstable',
+            streaming: true,
+            index: lastAssistantIdx,
+            deltaChars,
+          };
+        }
+
+        if (hasGrown) {
+          fresh = CTX.scrape(adapter);
+          await runExclusive(key, async () => {
+            const prev = (await chrome.storage.local.get(sk))[sk];
+            let messages = CTX.merge(prev && prev.messages, fresh);
+            if (prev && prev.messages && messages.length < prev.messages.length) {
+              messages = prev.messages;
+            }
+            const hash = hashOf(messages);
+            await chrome.storage.local.set({
+              [sk]: {
+                key,
+                site: adapter.id,
+                siteName: adapter.name,
+                title: prev && prev.titleEdited ? prev.title : titleOf(messages),
+                titleEdited: Boolean(prev && prev.titleEdited),
+                url: location.href,
+                updatedAt: Date.now(),
+                messages,
+                hash,
+              },
+            });
+          });
+        }
+      }
+    }
 
     let allMessages = [];
 
@@ -341,13 +517,23 @@
         return { ok: false, error: scrollerRes.error };
       }
       // Content completely fits within viewport (no scroll overflow anywhere)
-      allMessages = fresh;
+      // A missing/unrecognized scroller is not proof that the DOM contains the
+      // entire transcript. Preserve and reconcile any history already saved.
+      const saved = storedBeforeCapture && storedBeforeCapture.messages;
+      const merged = saved && saved.length ? CTX.merge(saved, fresh) : fresh;
+      allMessages = saved && merged.length < saved.length ? saved : merged;
       try {
         chrome.runtime.sendMessage({ type: 'ctx:captureProgress', phase: 'reading', count: allMessages.length });
       } catch (e) {}
       const isComplete = true;
       await runExclusive(key, async () => {
         const prev = (await chrome.storage.local.get(sk))[sk];
+        // Re-read inside the write queue so a concurrent autosave/capture is
+        // included, and never classify an uncertain visible window as complete.
+        const prevMessages = prev && prev.messages;
+        const merged = prevMessages && prevMessages.length ? CTX.merge(prevMessages, allMessages) : allMessages;
+        if (prevMessages && merged.length < prevMessages.length) allMessages = prevMessages;
+        else allMessages = merged;
         const hash = hashOf(allMessages);
         await chrome.storage.local.set({
           [sk]: {
@@ -385,12 +571,6 @@
     let scrollBlocked = false;
     const gaps = [];
     let ambiguousCount = 0;
-    const stepLogs = [];
-    let debugCapture = false;
-    try {
-      debugCapture = typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('ui:debugCapture') === '1';
-    } catch (e) {}
-
     const startTime = Date.now();
     const MAX_TIME_MS = 180000; // ~3 minutes hard cap
     const MAX_STEPS = 400; // ~400 steps hard cap
@@ -605,22 +785,6 @@
     } finally {
       // Part B #7: Clear isCapturing in finally
       isCapturing = false;
-      // Always restore original scroll position in finally
-      setScrollTop(scroller, initialScrollTop);
-    }
-
-    // 4. Stability check at the end (once at the end, never between scroll steps)
-    if (STREAM_CHECK_MS > 0 && !cancelCaptureRequested) {
-      const end1 = CTX.scrape(adapter);
-      await new Promise((r) => setTimeout(r, STREAM_CHECK_MS));
-      const end2 = CTX.scrape(adapter);
-      if (hashOf(end1) !== hashOf(end2)) {
-        return { ok: false, error: 'The reply is still streaming. Try again in a moment.' };
-      }
-      const endMerge = CTX.mergeDetailed(allMessages, end2, { prefer: 'head' });
-      if (!endMerge.gap && endMerge.kind !== 'no-overlap') {
-        allMessages = endMerge.messages;
-      }
     }
 
     // Part B #9: Count duplicates removed D
@@ -641,9 +805,8 @@
     }
     const duplicatesRemoved = Math.max(0, prevAdjacentDupes - finalAdjacentDupes);
 
-    // Part B #8: Final result: if reachedStart is true and no gaps and no ambiguous steps,
-    // REPLACE stored messages skipping the "count never decreases" guard to heal duplicates.
-    // If incomplete scan, merge into stored data as today with guard.
+    // Part B #8: Final result: RUN FINAL SAVE FIRST!
+    // Never lose collected data: all messages gathered during scroll phase are saved now.
     const isComplete = reachedStart && gaps.length === 0 && ambiguousCount === 0;
 
     await runExclusive(key, async () => {
@@ -686,6 +849,51 @@
       }
     });
 
+    // Restore original scroll position after saving
+    setScrollTop(scroller, initialScrollTop);
+    // Virtualized lists re-render at scroll restoration: wait for DOM quiet before any check!
+    await waitDomQuiet(scrollerNode, QUIET_IDLE_MS, QUIET_MAX_MS);
+
+    // 4. Stability check at the end: Warning ONLY, never discard saved data (ok: true)
+    let warning = undefined;
+    if (!force && !cancelCaptureRequested && (STREAM_CHECK_MS > 0 || CTX._forceEndCheck)) {
+      const lastAssistantEl = findLastAssistantEl(adapter);
+      if (lastAssistantEl) {
+        const end1 = sampleAssistantEl(lastAssistantEl, adapter);
+        if (STREAM_CHECK_MS > 0) {
+          await new Promise((r) => setTimeout(r, Math.min(STREAM_CHECK_MS, 400)));
+        }
+        const end2 = sampleAssistantEl(findLastAssistantEl(adapter), adapter);
+        let lastIdx = -1;
+        for (let i = allMessages.length - 1; i >= 0; i--) {
+          if (allMessages[i].role === 'assistant') {
+            lastIdx = i;
+            break;
+          }
+        }
+        if (lastIdx === -1) lastIdx = allMessages.length - 1;
+
+        const lastSavedText = (allMessages[lastIdx] && allMessages[lastIdx].text) || '';
+        const normSaved = lastSavedText.trim().replace(/\s+/g, ' ');
+        if (end1.hash !== end2.hash || end1.length !== end2.length || (end2.text && normSaved && end2.text !== normSaved) || CTX._forceEndCheck) {
+          const deltaChars = Math.abs(end2.length - end1.length) || Math.abs(end2.length - normSaved.length) || 1;
+          console.debug('[Context Handoff] Streaming check failed (end-unstable):', {
+            index: lastIdx,
+            deltaChars,
+          });
+          if (debugCapture) {
+            stepLogs.push({
+              type: 'streaming-fail',
+              reason: 'end-unstable',
+              index: lastIdx,
+              deltaChars,
+            });
+          }
+          warning = 'The last reply may be incomplete';
+        }
+      }
+    }
+
     // Part B #9: Report string
     const gapStr = gaps.length
       ? `${gaps.length} (${gaps.map((g) => 'near message ' + g.index).join(', ')})`
@@ -706,6 +914,7 @@
       reachedStart,
       steps: step,
       report,
+      warning,
       cancelled: cancelCaptureRequested,
       duplicatesRemoved,
       gaps: gaps.length,
@@ -840,7 +1049,7 @@
       return;
     }
     if (msg.type === 'ctx:capture') {
-      capture().then(send);
+      capture(msg.opts || msg).then(send);
       return true; // async response
     }
     if (msg.type === 'ctx:cancelCapture') {

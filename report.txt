@@ -1,0 +1,294 @@
+ContextHop — Project Understanding Report
+========================================
+
+Prepared: 17 October 2026
+Repository: ai-context-handoff
+Product name in the current extension: ContextHop
+
+
+1. Executive summary
+--------------------
+
+This repository contains a Manifest V3 Google Chrome extension that lets a
+person preserve a conversation from a supported AI chat site and carry its
+important context into another chat or account. It extracts rendered messages
+from the current page, converts them to readable Markdown-like text, redacts
+some likely credentials, and stores the resulting transcript locally in
+chrome.storage.local. A deterministic, on-device JavaScript routine then
+assembles a size-limited handoff prompt. The user can copy that prompt or export
+it, and can manage, search, import, and back up saved conversations.
+
+The design aims for zero service cost and no application backend. There are no
+dependencies on a hosted summarization API: compression is heuristic and
+deterministic. Supported adapters are ChatGPT, Claude, Gemini, and Kimi. The
+extension consists of page content scripts, a popup interface, and a full-page
+saved-chat manager. It is a browser extension project, not a server or a
+standalone web application.
+
+
+2. Repository map
+-----------------
+
+Root files:
+
+  README.md             Installation, usage, privacy claims, known limitations,
+                        and development commands.
+  CONTEXT.md            Earlier architecture/context notes. Useful background,
+                        but not a canonical description of every current detail.
+  report.md             A previous focused report about branding and the notes
+                        field; it is not the source code or a general spec.
+  package.json          Private npm project; defines `npm test` as
+                        `node tests/run.js` and jsdom as a development dependency.
+  package-lock.json     Locked npm dependency tree.
+  tests/run.js          DOM-oriented tests for extraction, adapters, capture,
+                        autosave, compression, redaction, and manager logic.
+
+Extension files:
+
+  extension/manifest.json       MV3 manifest, popup/options entry points,
+                               site host patterns, and storage permissions.
+  extension/src/redact.js       Credential-like text masking rules.
+  extension/src/extract.js      DOM-to-text/Markdown extraction and merging of
+                               overlapping transcript windows.
+  extension/src/adapters.js     Per-site host, selector, chat-ID, and streaming
+                               behavior; shared autosave preference precedence.
+  extension/src/observer.js     Content-script storage, mutation observation,
+                               manual capture, scroll collection, and messaging.
+  extension/src/compress.js     Token estimation and handoff prompt builder.
+  extension/popup/              Compact action popup: active chat capture,
+                               saved chat selection, budget/notes, copy/export,
+                               deletion, and manager navigation.
+  extension/manager/            Full saved-chat manager: filtering, reading,
+                               handoff preview, imports/exports, cleanup, and
+                               settings.
+  extension/ui/tokens.css       Shared type, color, spacing, theme, and motion
+                               tokens.
+  extension/ui/README.md        Design system documentation.
+  extension/assets/             SVG symbols, branding, local fonts, and site
+                               artwork/icons.
+  extension/icons/              Extension and platform icon assets (some assets
+                               also appear under assets/icons/).
+
+
+3. Runtime architecture and data flow
+-------------------------------------
+
+3.1 Extension installation and page scope
+
+The manifest declares version 3, the popup at popup/popup.html, and the manager
+as the options page. It grants `storage` and `unlimitedStorage`. Content scripts
+run at document_idle only on listed HTTPS patterns for chatgpt.com,
+chat.openai.com, claude.ai, gemini.google.com, and the listed kimi.ai,
+kimi.com, and kimi.moonshot.cn hosts. The script load order is significant:
+redact.js, extract.js, adapters.js, then observer.js. Popup and manager load the
+shared adapter helpers and compressor needed for UI-side selection and preview.
+
+3.2 Platform adapter selection
+
+adapters.js selects a descriptor by hostname. Each descriptor identifies the
+site, user and assistant message selectors, content selectors, host names, a
+chat ID parser based on the URL, and a streaming-state detector. Extraction
+code uses these selectors instead of embedding site-specific logic throughout
+the interfaces. The site DOMs are not extension APIs; they may change, so
+selector drift is a practical maintenance concern. The popup can show selector
+match counts when capture finds no messages.
+
+The adapters cover ChatGPT, Claude, Gemini, and Kimi. IDs come from site URL
+routes (for example, ChatGPT `/c/...`, Claude `/chat/...`, Gemini `/app/...`,
+and Kimi routes). A chat without an ID is skipped, which means temporary or
+not-yet-persisted conversations may not be stored.
+
+3.3 Extraction, redaction, and merge
+
+extract.js reads message elements and turns supported DOM structures into
+plain text with Markdown conventions for headings, paragraphs, lists, tables,
+links, and fenced code. It filters interface elements such as buttons,
+toolbars, copy controls, icons, thinking/tool UI in applicable adapters, and
+other known non-message content. A diagnostic helper counts candidate user and
+assistant elements.
+
+The extractor assigns message identity/fingerprints and the merge logic aligns
+freshly rendered messages with stored messages. This matters because chat sites
+often virtualize long transcripts and render only a window of messages at a
+time. The merge implementation handles tail, middle, and head overlaps and
+tries to avoid false anchors when text repeats. When it cannot establish a
+safe overlap, it avoids silently replacing known history. The observer also
+guards against reducing the stored message count when a page only exposes a
+partial window.
+
+redact.js applies regular expressions to likely private keys, several common
+provider token formats, JWT-like strings, bearer credentials, and secret-like
+key/value assignments. The extraction path invokes this sanitization before
+messages are persisted. This is a pattern-based safeguard, not a guarantee that
+all sensitive information will be recognized; arbitrary personal data or
+unrecognized secret formats can remain in chat text.
+
+3.4 Persistence and autosave
+
+The extension uses chrome.storage.local. Saved conversations use keys shaped
+like `chat:<site>:<chatId>` and notes use `notes:<site>:<chatId>`. A chat record
+contains a stable key, site ID/name, title, `titleEdited` flag, source URL,
+updated timestamp, ordered messages, and a content hash. Messages carry at
+least a role and text. Settings are stored under `settings`; UI preferences use
+additional `ui:`-prefixed keys in local storage where applicable.
+
+Autosave is optional. Settings support a default, per-site overrides, and
+per-chat overrides; the more specific choice takes precedence. A content
+MutationObserver is attached only when the resolved setting enables autosave.
+Changes are debounced and bounded by a maximum wait, then scraped and merged.
+Storage writes for the same chat are serialized to avoid racing updates. A
+manual capture remains available even when autosave is off. Edited titles are
+preserved when later page saves occur.
+
+3.5 Manual capture and virtualized conversations
+
+Manual capture is initiated by the popup through a message to the content
+script. The content script first scrapes and saves currently rendered messages,
+then can locate a scrollable transcript, collect additional rendered windows,
+merge them, and restore the user's original scroll position. Progress and
+cancellation are sent back to the popup. Limits on time/steps and handling for
+blocked scrolling prevent an unbounded page walk. This is best-effort because
+each service controls its own DOM and loading behavior.
+
+The current working tree adds a streaming-aware capture flow. It records the
+initial visible transcript promptly, checks visible streaming indicators, and
+samples the last assistant message for stability before finalizing capture.
+If a reply still appears to be changing, the popup offers a “Capture anyway”
+action. Forced capture skips the stability checks. During capture, the popup
+also displays waiting/reading progress. These are local, uncommitted edits in
+the supplied workspace, not necessarily part of the repository's committed
+baseline.
+
+3.6 Handoff compression
+
+compress.js exposes `CTX.buildHandoff(chat, options)`. It estimates tokens at
+roughly one token per four characters; actual model tokenization varies, so
+budgets are approximate. The builder creates a continuation instruction and
+then allocates room in this order:
+
+  1. Header/instructions and optional user-provided summary or notes.
+  2. Recent messages verbatim, with clipping when needed and an effort to keep
+     at least the last two messages.
+  3. Recent versions of code blocks found earlier in the transcript. Similar
+     blocks are identified using language and their first non-empty lines;
+     older matching versions are discarded.
+  4. An extractive digest of older turns. User messages are retained in clipped
+     form; assistant sentences are selected using word frequency, position,
+     and decision/action term bonuses. Filler openers and code bodies are
+     reduced.
+
+Older turns may be omitted progressively and non-verbatim allocations are
+scaled down in repeated attempts to meet the chosen budget. The result includes
+the generated text and metadata such as estimated tokens, messages retained
+verbatim, omitted messages, code-block count, and whether the estimate remains
+over budget. The optional notes field is intended for a user's goal, decisions,
+current state, or a handoff summary generated by the current AI; it is placed
+near the top and clipped to a portion of the budget. No LLM is called by this
+compression code.
+
+
+4. User-facing components
+-------------------------
+
+4.1 Popup
+
+The popup identifies a supported current tab, shows its capture/autosave state,
+and lists saved conversations. It can capture or cancel capture, toggle
+per-chat autosave, choose a saved chat, select a token budget, add handoff
+notes, preview the generated context, copy it, export Markdown, delete a chat,
+clear stored chats, search the list, and open the manager. It also provides a
+copyable prompt intended to ask the current AI to prepare a concise handoff
+summary. UI state responds to storage changes while open.
+
+4.2 Saved-chat manager
+
+The options page provides a searchable, filterable, sortable conversation list
+with platform counts and bulk selection. A selected chat can be viewed in
+paginated message pages or in a handoff tab with budget controls, notes, a live
+preview, token meter, clipboard copy, Markdown export, original-chat link, title
+rename, and deletion. Message text is rendered through textContent in the
+manager rather than treated as markup.
+
+The manager also supports bulk JSON export, JSON backup import with validation
+and conflict choices, deletion by age, a local-storage usage meter, autosave
+defaults, theme/density preferences, and a clear-all control. Import/export is
+local file handling; the project does not define a cloud backup service.
+
+4.3 Visual system
+
+The UI uses local fonts and locally bundled SVG/image assets. Shared CSS tokens
+define a dark ink palette, light theme, typography, spacing, radii, action and
+status colors, reduced-motion behavior, and platform identity accents. The
+design-system README describes the signature accent, token meter, toast
+notifications, and native dialog patterns. There are no remote font or UI
+framework dependencies apparent in the extension assets.
+
+
+5. Privacy and security characteristics
+----------------------------------------
+
+The product's key privacy boundary is local browser storage and in-page DOM
+reading. The manifest has storage-related permissions and site host matches;
+the project describes no backend, telemetry, or external network dependency.
+The extension needs access to the supported pages to read their visible chat
+content. Saved transcripts and notes remain in the user's Chrome profile until
+deleted or browser data is otherwise removed. JSON/Markdown export deliberately
+creates local files outside that storage area.
+
+Redaction lowers the chance of storing common credential formats but is not a
+complete secrets scanner. A generated handoff copied by the user may expose
+whatever unredacted information remains in the transcript. The user should
+review handoff text and backups when sensitive content is involved. This is a
+practical consequence of working with conversation data, not a network behavior
+implemented by this repository.
+
+
+6. Development and testing
+--------------------------
+
+package.json defines `npm test` as `node tests/run.js`; jsdom is the development
+dependency used by the test harness. Tests cover platform-shaped DOM fixtures,
+message extraction and merging, redaction, compression budgets, virtualized
+scroll capture, autosave preference behavior, and manager operations. README.md
+documents loading the `extension` directory as an unpacked extension in
+Chrome. No build or bundling step is required by the manifest: the extension
+loads its JavaScript and CSS files directly.
+
+This report was based on repository inspection. The test command was not run
+while preparing this document.
+
+
+7. Current workspace state and caveats
+---------------------------------------
+
+At inspection time the working tree already had modifications in:
+
+  extension/popup/popup.js
+  extension/src/adapters.js
+  extension/src/observer.js
+
+Those changes implement visible-element-aware streaming detection, more
+careful streaming/stability checks, quick initial saves, a force-capture retry
+in the popup, and waiting progress. They were present before this report was
+created and have been left untouched. report.md describes earlier focused work
+and should not be mistaken for an exhaustive current project specification.
+
+Known constraints visible from the code/documentation include DOM selector
+fragility, skipped chats without stable URL IDs, approximate token counts,
+best-effort recovery of virtualized history, and pattern-limited secret
+redaction. Platform behavior can change independently of this extension.
+
+
+8. Overall understanding
+-----------------------
+
+ContextHop is a local transcript-preservation and context-transfer tool. Its
+core lifecycle is: recognize a supported chat page, extract and sanitize
+messages, merge them with any previously stored transcript, optionally keep
+that transcript updated, then compose a user-controlled, budgeted handoff from
+the most valuable parts of the conversation. The content script owns page
+integration and persistence; the popup is the quick capture/copy surface; the
+manager is the library and maintenance surface; and compress.js is the shared
+handoff engine. The project favors privacy, portability, and predictable
+heuristics over remote AI summarization or platform integrations.
+

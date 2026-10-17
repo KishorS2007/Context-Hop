@@ -701,6 +701,9 @@
     // Load Notes
     const nk = 'notes:' + chat.key;
     const notesData = await chrome.storage.local.get(nk);
+    // The user may have selected another chat while the storage read was
+    // pending. Do not let this stale render replace the current conversation.
+    if (selectedKey !== key) return;
     const notesVal = notesData[nk] || '';
     $('handoffNotes').value = notesVal;
     updateNotesCharCount(notesVal);

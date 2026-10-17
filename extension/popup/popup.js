@@ -174,10 +174,29 @@
   }
 
   // --- Toasts (Replaces plain status line, maintains accessibility) ---
-  function showToast(text, duration = 2400) {
+  function showToast(text, duration = 2400, action = null) {
     const toast = $('toast');
     if (!toast) return;
     toast.textContent = text;
+    if (action && action.text && action.onClick) {
+      const space = document.createTextNode(' ');
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = action.text;
+      link.style.textDecoration = 'underline';
+      link.style.marginLeft = '8px';
+      link.style.cursor = 'pointer';
+      link.style.fontWeight = '600';
+      link.style.color = 'inherit';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        toast.hidden = true;
+        action.onClick();
+      });
+      toast.appendChild(space);
+      toast.appendChild(link);
+      duration = Math.max(duration, 6000);
+    }
     toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
@@ -186,7 +205,7 @@
 
     // Keep hidden status element updated for screen readers
     const srStatus = $('status');
-    if (srStatus) srStatus.textContent = text;
+    if (srStatus) srStatus.textContent = text + (action ? ` (${action.text})` : '');
   }
 
   // --- Relative Time Formatting (No middle dots) ---
@@ -621,26 +640,39 @@
         return;
       }
 
-      setCapturing(true, false);
-      const statusText = $('captureStatusText');
-      if (statusText) statusText.textContent = 'Reading chat…';
+      const runCapture = (force = false) => {
+        setCapturing(true, false);
+        const statusText = $('captureStatusText');
+        if (statusText) statusText.textContent = 'Reading chat…';
 
-      chrome.tabs.sendMessage(t.id, { type: 'ctx:capture' }, async (r) => {
-        setCapturing(false, false);
-        if (chrome.runtime.lastError || !r) {
-          return showToast('Tab is not a supported chat site (or needs a refresh).');
-        }
-        if (!r.ok) {
-          const m = r.matched
-            ? `Matched ${r.matched.user} user / ${r.matched.assistant} assistant elements.`
-            : '';
-          const err = r.error ? (r.error.endsWith('.') ? r.error : r.error + '.') : 'Failed to capture chat.';
-          return showToast(m ? `${err} ${m}` : err);
-        }
-        const msg = r.summary || (r.count !== undefined && r.added !== undefined ? `Captured ${r.count} messages (${r.added} new)` : (r.report || `Captured ${r.count} messages`));
-        showToast(msg);
-        await load();
-      });
+        chrome.tabs.sendMessage(t.id, { type: 'ctx:capture', force }, async (r) => {
+          setCapturing(false, false);
+          if (chrome.runtime.lastError || !r) {
+            return showToast('Tab is not a supported chat site (or needs a refresh).');
+          }
+          if (!r.ok) {
+            const m = r.matched
+              ? `Matched ${r.matched.user} user / ${r.matched.assistant} assistant elements.`
+              : '';
+            const err = r.error ? (r.error.endsWith('.') ? r.error : r.error + '.') : 'Failed to capture chat.';
+            const isStreamingErr = Boolean(r.streaming || (r.reason && (r.reason === 'flag' || r.reason === 'start-unstable')) || /still streaming/i.test(r.error));
+            if (isStreamingErr) {
+              return showToast(r.error, 6000, {
+                text: 'Capture anyway',
+                onClick: () => runCapture(true),
+              });
+            }
+            return showToast(m ? `${err} ${m}` : err);
+          }
+          let msg = r.summary || (r.count !== undefined && r.added !== undefined ? `Captured ${r.count} messages (${r.added} new)` : (r.report || `Captured ${r.count} messages`));
+          if (r.warning) {
+            msg += ` (${r.warning})`;
+          }
+          showToast(msg);
+          await load();
+        });
+      };
+      runCapture(false);
     });
   });
 
@@ -667,6 +699,9 @@
         setCapturing(true, true);
         const str = `Loading earlier messages (${msg.count} found)…`;
         if (statusText) statusText.textContent = str;
+      } else if (msg.phase === 'waiting') {
+        setCapturing(true, false);
+        if (statusText) statusText.textContent = msg.message || 'Waiting for the reply to finish…';
       }
     }
   });
