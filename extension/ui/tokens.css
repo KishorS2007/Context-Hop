@@ -1,6 +1,6 @@
 /* ==========================================================================
-   Baton Design System Tokens
-   Palette: "ink canvas, one yellow baton"
+   ContextHop Design System Tokens
+   Palette: "ink canvas, warm signature accent"
    ========================================================================== */
 
 /* Local font face definitions */
@@ -113,8 +113,8 @@
   --action-subtle: rgba(62, 99, 240, 0.15);
   --link: #8FB0FF;
 
-  --baton: #FFC83D;         /* warm signature yellow */
-  --baton-glow: rgba(255, 200, 61, 0.2);
+  --signature: #FFC83D;         /* warm signature yellow */
+  --signature-glow: rgba(255, 200, 61, 0.2);
 
   --ok: #3FCB8E;
   --ok-bg: rgba(63, 203, 142, 0.12);
@@ -150,8 +150,8 @@
   --action-subtle: rgba(44, 79, 216, 0.08);
   --link: #2443BE;
 
-  --baton: #E5A200;         /* baton as shape or fill, never as text on white */
-  --baton-glow: rgba(229, 162, 0, 0.25);
+  --signature: #E5A200;         /* signature accent as shape or fill, never as text on white */
+  --signature-glow: rgba(229, 162, 0, 0.25);
 
   --ok: #15803D;
   --ok-bg: rgba(21, 128, 61, 0.1);
@@ -186,8 +186,8 @@
     --action-subtle: rgba(44, 79, 216, 0.08);
     --link: #2443BE;
 
-    --baton: #E5A200;
-    --baton-glow: rgba(229, 162, 0, 0.25);
+    --signature: #E5A200;
+    --signature-glow: rgba(229, 162, 0, 0.25);
 
     --ok: #15803D;
     --ok-bg: rgba(21, 128, 61, 0.1);

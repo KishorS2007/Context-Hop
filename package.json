@@ -1,5 +1,5 @@
 {
-  "name": "ai-context-handoff",
+  "name": "contexthop",
   "version": "0.1.0",
   "private": true,
   "description": "Chrome extension that saves AI chats locally and builds a compact handoff for another account.",

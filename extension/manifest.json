@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Baton",
+  "name": "ContextHop",
   "version": "0.1.0",
-  "description": "Context handoff across AI chats. Saves chats locally and builds a compact, paste-ready context prompt.",
+  "description": "Save an AI chat and hop it to a new account or site. Free, local, no servers.",
   "permissions": ["storage", "unlimitedStorage"],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Baton",
+    "default_title": "ContextHop",
     "default_icon": {
       "16": "assets/icons/icon16.png",
       "32": "assets/icons/icon32.png"

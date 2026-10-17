@@ -1,4 +1,4 @@
-# AI Context Handoff
+# ContextHop
 
 A free Chrome extension that watches your AI chat, saves it **only on your computer**, and builds a compact,
 paste-ready context so you can continue the same work in another account when you hit a usage limit.

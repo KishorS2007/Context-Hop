@@ -449,14 +449,14 @@
 
   // --- Signature Copy Animation ---
   function triggerSignatureAnimation() {
-    // 1. Baton slides along lane line
-    const baton = $('laneBaton');
-    if (baton) {
-      baton.classList.remove('slide');
-      void baton.offsetWidth; // Force DOM reflow
-      baton.classList.add('slide');
+    // 1. Signature mark slides along lane line
+    const mark = $('signatureMark');
+    if (mark) {
+      mark.classList.remove('slide');
+      void mark.offsetWidth; // Force DOM reflow
+      mark.classList.add('slide');
       setTimeout(() => {
-        baton.classList.remove('slide');
+        mark.classList.remove('slide');
       }, 1400);
     }
 
@@ -649,7 +649,8 @@
     const blob = new Blob([$('preview').value], { type: 'text/markdown' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `handoff-${current.site || 'ai'}-${new Date().toISOString().slice(0, 10)}.md`;
+    const sanitizedTitle = (current.title || 'chat').replace(/[/\\?%*:|"<>]/g, '-').slice(0, 60);
+    a.download = `contexthop-${sanitizedTitle}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
     showToast('Exported Markdown file.');

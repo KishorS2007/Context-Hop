@@ -1,6 +1,6 @@
 /* ==========================================================================
-   Baton Manager Stylesheet
-   Direction: "ink canvas, one yellow baton"
+   ContextHop Manager Stylesheet
+   Direction: "ink canvas, warm signature accent"
    ========================================================================== */
 
 * {
@@ -142,7 +142,7 @@ button, input, select, textarea {
   width: 6px;
   height: 6px;
   border-radius: var(--radius-pill);
-  background: var(--baton);
+  background: var(--signature);
 }
 .siteDot.chatgpt { background: var(--platform-chatgpt); }
 .siteDot.claude { background: var(--platform-claude); }
@@ -187,6 +187,15 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.brandLogo {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .brandName {
@@ -446,7 +455,7 @@ button, input, select, textarea {
   bottom: 10px;
   width: 3px;
   border-radius: var(--radius-pill);
-  background: var(--baton);
+  background: var(--signature);
 }
 
 /* Checkbox (reveals on hover or when checked) */
@@ -658,7 +667,7 @@ button, input, select, textarea {
   bottom: 0;
   left: 0;
   height: 2px;
-  background: var(--baton);
+  background: var(--signature);
   border-radius: var(--radius-pill);
   transition: transform var(--transition-fast), width var(--transition-fast);
 }
@@ -723,7 +732,7 @@ button, input, select, textarea {
   width: 6px;
   height: 6px;
   border-radius: var(--radius-pill);
-  background: var(--baton);
+  background: var(--signature);
   flex-shrink: 0;
 }
 .siteDot.chatgpt { background: var(--platform-chatgpt); }
@@ -890,7 +899,7 @@ button, input, select, textarea {
 }
 
 .renderedMarkdown blockquote {
-  border-left: 3px solid var(--baton);
+  border-left: 3px solid var(--signature);
   padding-left: 12px;
   color: var(--text-2);
   margin: 4px 0;

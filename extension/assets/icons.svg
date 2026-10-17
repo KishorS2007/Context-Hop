@@ -1,13 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
-  <!-- Signature Baton Mark -->
-  <symbol id="icon-baton-mark" viewBox="0 0 20 20">
+  <!-- Signature Mark -->
+  <symbol id="icon-signature-mark" viewBox="0 0 20 20">
     <rect x="3" y="8" width="14" height="4" rx="2" transform="rotate(-45 10 10)" fill="currentColor" />
   </symbol>
 
-  <!-- Baton Logo: Ink square with yellow diagonal baton -->
-  <symbol id="icon-baton-logo" viewBox="0 0 24 24">
-    <rect x="2" y="2" width="20" height="20" rx="6" fill="#111B2E" stroke="#26385A" stroke-width="1.5" />
-    <rect x="6.5" y="10" width="11" height="4" rx="2" transform="rotate(-45 12 12)" fill="#FFC83D" />
+  <!-- ContextHop Logo -->
+  <symbol id="icon-signature-logo" viewBox="0 0 128 128">
+    <rect width="128" height="128" rx="28" fill="#0B1220"/>
+    <path d="M 48 58 C 50 22 72 32 80 52 M 83.2 43.6 L 80 52 L 72.4 47" fill="none" stroke="#FFC83D" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 42 64.5 C 51.4 64.5 59 70.5 59 78 C 59 85.5 51.4 91.5 42 91.5 C 39.5 91.5 37.2 91.1 35 90.4 L 27 96 L 29.5 87.6 C 26.9 85.2 25 81.8 25 78 C 25 70.5 32.6 64.5 42 64.5 Z" fill="none" stroke="#E8EDF7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 86 60 C 97 60 106 67 106 76 C 106 81 103.8 85.5 100.2 88.7 L 104 98 L 94.5 91.4 C 92.4 91.8 89.2 92 86 92 C 75 92 66 85 66 76 C 66 67 75 60 86 60 Z" fill="#FFC83D" stroke="#FFC83D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
   </symbol>
 
   <!-- Copy Icon -->

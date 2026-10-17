@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Baton</title>
+  <title>ContextHop</title>
   <link rel="stylesheet" href="../ui/tokens.css">
   <link rel="stylesheet" href="popup.css">
 </head>
@@ -11,10 +11,8 @@
   <!-- Header -->
   <header class="popupHeader">
     <div class="brand">
-      <svg class="batonLogo" width="22" height="22" aria-hidden="true">
-        <use href="../assets/icons.svg#icon-baton-logo"></use>
-      </svg>
-      <span class="brandName">Baton</span>
+      <img class="brandLogo" src="../assets/icons/logo-tile.svg" width="22" height="22" alt="ContextHop">
+      <span class="brandName">ContextHop</span>
     </div>
     <div class="headerActions">
       <button id="manageBtn" class="iconBtn" title="Open manager" aria-label="Open manager">
@@ -41,9 +39,9 @@
     </div>
   </header>
 
-  <!-- Signature Lane Line with the Yellow Baton Mark -->
+  <!-- Signature Lane Line with the Accent Mark -->
   <div class="laneTrack" aria-hidden="true">
-    <div id="laneBaton" class="laneBaton"></div>
+    <div id="signatureMark" class="signature-mark"></div>
   </div>
 
   <main class="popupBody">

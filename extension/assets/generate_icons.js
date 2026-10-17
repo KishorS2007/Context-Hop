@@ -2,154 +2,134 @@
 // Run with: node extension/assets/generate_icons.js
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
+const http = require('http');
+const { spawn } = require('child_process');
 
-const iconsDir = path.join(__dirname, 'icons');
-if (!fs.existsSync(iconsDir)) fs.mkdirSync(iconsDir, { recursive: true });
+const assetsIconsDir = path.join(__dirname, 'icons');
+const extIconsDir = path.resolve(__dirname, '../icons');
 
-function createPNG(width, height, getPixel) {
-  const rowSize = 1 + width * 4;
-  const raw = Buffer.alloc(rowSize * height);
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * rowSize;
-    raw[rowOffset] = 0;
-    for (let x = 0; x < width; x++) {
-      const [r, g, b, a] = getPixel(x, y);
-      const pxOffset = rowOffset + 1 + x * 4;
-      raw[pxOffset] = r;
-      raw[pxOffset + 1] = g;
-      raw[pxOffset + 2] = b;
-      raw[pxOffset + 3] = a;
-    }
-  }
+if (!fs.existsSync(assetsIconsDir)) fs.mkdirSync(assetsIconsDir, { recursive: true });
+if (!fs.existsSync(extIconsDir)) fs.mkdirSync(extIconsDir, { recursive: true });
 
-  const deflated = zlib.deflateSync(raw);
+const logo16SvgPath = path.join(assetsIconsDir, 'logo-16.svg');
+const logoTileSvgPath = path.join(assetsIconsDir, 'logo-tile.svg');
 
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-    table[i] = c;
-  }
-  function crc32(buf) {
-    let crc = 0 ^ (-1);
-    for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xFF];
-    return (crc ^ (-1)) >>> 0;
-  }
-
-  function chunk(type, data) {
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(data.length, 0);
-    const typeBuf = Buffer.from(type, 'ascii');
-    const crcBuf = Buffer.alloc(4);
-    crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-    return Buffer.concat([len, typeBuf, data, crcBuf]);
-  }
-
-  const header = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  return Buffer.concat([
-    header,
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflated),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+if (!fs.existsSync(logo16SvgPath) || !fs.existsSync(logoTileSvgPath)) {
+  console.error('Missing logo-16.svg or logo-tile.svg in', assetsIconsDir);
+  process.exit(1);
 }
 
-function distRoundRect(x, y, cx, cy, w, h, r) {
-  const dx = Math.abs(x - cx) - (w / 2 - r);
-  const dy = Math.abs(y - cy) - (h / 2 - r);
-  const ax = Math.max(dx, 0);
-  const ay = Math.max(dy, 0);
-  return Math.sqrt(ax * ax + ay * ay) + Math.min(Math.max(dx, dy), 0) - r;
+const logo16Svg = fs.readFileSync(logo16SvgPath, 'utf8');
+const logoTileSvg = fs.readFileSync(logoTileSvgPath, 'utf8');
+
+function findChrome() {
+  if (process.env.CHROME_BIN && fs.existsSync(process.env.CHROME_BIN)) return process.env.CHROME_BIN;
+  const candidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return null;
 }
 
-function distCapsule(x, y, x1, y1, x2, y2, radius) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const l2 = dx * dx + dy * dy;
-  let t = ((x - x1) * dx + (y - y1) * dy) / l2;
-  t = Math.max(0, Math.min(1, t));
-  const px = x1 + t * dx;
-  const py = y1 + t * dy;
-  return Math.sqrt((x - px) * (x - px) + (y - py) * (y - py)) - radius;
+const chromePath = findChrome();
+if (!chromePath) {
+  console.error('Google Chrome executable not found. Existing PNG icons are retained.');
+  process.exit(0);
 }
 
-function renderBatonIcon(size) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const boxW = size * 0.88;
-  const boxH = size * 0.88;
-  const boxR = size * 0.22;
-
-  const batonLen = size * 0.38;
-  const batonRadius = Math.max(1.2, size * 0.08);
-  const cos45 = Math.cos(Math.PI / 4);
-  const sin45 = Math.sin(Math.PI / 4);
-
-  const x1 = cx - batonLen * 0.5 * cos45;
-  const y1 = cy + batonLen * 0.5 * sin45;
-  const x2 = cx + batonLen * 0.5 * cos45;
-  const y2 = cy - batonLen * 0.5 * sin45;
-
-  return createPNG(size, size, (x, y) => {
-    let rSum = 0, gSum = 0, bSum = 0, aSum = 0;
-    const samples = 3;
-    for (let sy = 0; sy < samples; sy++) {
-      for (let sx = 0; sx < samples; sx++) {
-        const px = x + (sx + 0.5) / samples;
-        const py = y + (sy + 0.5) / samples;
-
-        const dBox = distRoundRect(px, py, cx, cy, boxW, boxH, boxR);
-        const dBaton = distCapsule(px, py, x1, y1, x2, y2, batonRadius);
-
-        let r = 0, g = 0, b = 0, a = 0;
-
-        if (dBox <= 0) {
-          const isBorder = dBox > -Math.max(1, size * 0.04);
-          if (isBorder) {
-            r = 0x26; g = 0x38; b = 0x5A; a = 1;
-          } else {
-            r = 0x11; g = 0x1B; b = 0x2E; a = 1;
-          }
-
-          if (dBaton <= 0) {
-            r = 0xFF; g = 0xC8; b = 0x3D; a = 1;
-          } else if (dBaton < 1) {
-            const t = 1 - dBaton;
-            r = Math.round(r * (1 - t) + 0xFF * t);
-            g = Math.round(g * (1 - t) + 0xC8 * t);
-            b = Math.round(b * (1 - t) + 0x3D * t);
-          }
-        } else if (dBox < 1) {
-          const t = 1 - dBox;
-          r = 0x26; g = 0x38; b = 0x5A; a = t;
-        }
-
-        rSum += r; gSum += g; bSum += b; aSum += a;
-      }
-    }
-    const total = samples * samples;
-    return [
-      Math.round(rSum / total),
-      Math.round(gSum / total),
-      Math.round(bSum / total),
-      Math.round((aSum / total) * 255),
-    ];
+const PORT = 9483;
+const html = `<!DOCTYPE html>
+<html>
+<body>
+<canvas id="c"></canvas>
+<script>
+async function svgToPng(svgStr, size) {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = url;
   });
 }
 
-for (const s of [16, 32, 48, 128]) {
-  const png = renderBatonIcon(s);
-  const p = path.join(iconsDir, 'icon' + s + '.png');
-  fs.writeFileSync(p, png);
-  console.log('Saved ' + p);
+async function run() {
+  const s16 = await svgToPng(${JSON.stringify(logo16Svg)}, 16);
+  await fetch('/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ size: 16, data: s16 }) });
+
+  const s32 = await svgToPng(${JSON.stringify(logoTileSvg)}, 32);
+  await fetch('/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ size: 32, data: s32 }) });
+
+  const s48 = await svgToPng(${JSON.stringify(logoTileSvg)}, 48);
+  await fetch('/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ size: 48, data: s48 }) });
+
+  const s128 = await svgToPng(${JSON.stringify(logoTileSvg)}, 128);
+  await fetch('/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ size: 128, data: s128 }) });
+
+  await fetch('/done');
 }
+run();
+</script>
+</body>
+</html>`;
+
+let chromeProc = null;
+const server = http.createServer((req, res) => {
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+  } else if (req.url === '/save' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      const { size, data } = JSON.parse(body);
+      const base64 = data.replace(/^data:image\/png;base64,/, '');
+      const buf = Buffer.from(base64, 'base64');
+      fs.writeFileSync(path.join(assetsIconsDir, `icon${size}.png`), buf);
+      fs.writeFileSync(path.join(extIconsDir, `icon${size}.png`), buf);
+      console.log(`Saved icon${size}.png`);
+      res.writeHead(200);
+      res.end('ok');
+    });
+  } else if (req.url === '/done') {
+    res.writeHead(200);
+    res.end('ok');
+    setTimeout(() => {
+      server.close();
+      if (chromeProc) chromeProc.kill();
+      process.exit(0);
+    }, 500);
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  chromeProc = spawn(chromePath, [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    `http://127.0.0.1:${PORT}`
+  ]);
+  chromeProc.on('error', (err) => {
+    console.error('Failed to spawn Chrome:', err);
+    process.exit(1);
+  });
+});

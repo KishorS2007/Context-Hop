@@ -1170,7 +1170,8 @@
     const chat = allChats.find((c) => c.key === selectedKey);
     if (!chat) return;
     const text = $('handoffPreview').value;
-    const filename = `handoff-${chat.site || 'ai'}-${new Date().toISOString().slice(0, 10)}.md`;
+    const sanitizedTitle = (chat.title || 'chat').replace(/[/\\?%*:|"<>]/g, '-').slice(0, 60);
+    const filename = `contexthop-${sanitizedTitle}.md`;
     downloadBlob(filename, text, 'text/markdown');
     showToast('Exported Markdown file.');
   }
@@ -1295,7 +1296,7 @@
     const toExport = allChats.filter((c) => selectedForBulk.has(c.key));
     if (!toExport.length) return;
     const json = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), chats: toExport }, null, 2);
-    downloadBlob(`baton-backup-${toExport.length}-chats-${new Date().toISOString().slice(0, 10)}.json`, json, 'application/json');
+    downloadBlob(`contexthop-backup-${new Date().toISOString().slice(0, 10)}.json`, json, 'application/json');
     showToast(`Exported ${toExport.length} chats as JSON.`);
   });
 
