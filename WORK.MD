@@ -78,3 +78,34 @@ Fix popup **Capture chat** so it reliably collects the full available transcript
 - Extended the existing 100-message lazy-loading regression: after a full capture it runs two captures concurrently and asserts both report 100 messages/0 new and the stored sequence remains exactly messages 1–50 in order. The test passes; sequential repeated capture had also passed before being strengthened to concurrent runs.
 - Ran full `npm test` after the regression update: all 88 tests pass.
 - No additional production change was justified by this attachment alone: repeated click capture is idempotent in the existing realistic virtualized fixture, while the shared source transcript could not be inspected in browser. Need a failing real DOM/storage trace to distinguish source conversation repeats, stale already-saved duplicates, and a ChatGPT selector/merge-specific interleaving issue.
+
+## Continuation: post-scroll delay and network lazy loading
+
+- Reviewed the user's hypothesis that the extension scrolls and scrapes simultaneously, allowing the page to destroy DOM before extraction. The capture loop is sequential: it requests a scroll, waits for DOM quiet, then scrapes the currently rendered window. This makes direct simultaneous scroll/scrape unlikely.
+- Found a real timing gap: `waitDomQuiet()` can resolve after 400 ms of no DOM mutations even when a lazy-load network request is still pending. A request may not mutate the DOM until its response arrives, so DOM quiet alone is not proof the next older messages are available.
+- `extension/src/observer.js`: added a configurable `CTX.CAPTURE_STEP_GRACE_MS` delay (750 ms by default) after scrolling, followed by the existing DOM-quiet wait, before scraping the window. Applied it to initial bottom positioning, normal upward steps, blocked-scroll retries, overlap-recovery retries, and top-edge loading checks.
+- Also reassert the top-edge scroll position on each loading check. The delayed-load fixture showed that some virtualized scrollers need a repeated top-edge event to start fetching the next older batch.
+- `tests/run.js`: the synthetic lazy-loading capture now delays prepending each older batch 80 ms, longer than its 10 ms DOM-quiet threshold, while configuring a 100 ms capture grace. It verifies all 100 messages still arrive in order and the original scroll position is restored.
+- Verification: focused delayed lazy-load capture passes; full `npm test` passes all 88 tests; `git diff --check` passes.
+- Limitation: the delay gives ordinary in-flight fetches time to complete but cannot guarantee success for an arbitrarily slow or failed request. Loading is not exposed consistently by all chat sites, so live validation and possibly a longer configurable grace may be needed if the user's connection regularly exceeds this window.
+
+## Rollback: post-scroll grace delay
+
+- User reported that the 750 ms delay did not work and asked to revert it.
+- Removed `CAPTURE_STEP_GRACE_MS` and all post-scroll grace waits from `extension/src/observer.js`; restored the previous DOM-quiet waits and top-edge behavior.
+- Restored `tests/run.js` lazy-load fixture to its prior 25 ms response and removed test-only delay configuration. Other previously existing changes and regressions remain intact.
+- Verification after rollback: full `npm test` passes all 88 tests; `git diff --check` passes (Git only reports the existing LF-to-CRLF normalization warnings).
+
+## Continuation: recycled DOM node hypothesis
+
+- Checked whether extraction suppresses repeated reads by DOM node identity. It does not: each `CTX.scrape(adapter)` call re-runs `document.querySelectorAll(...)`, reconstructs messages from the current elements' text, and has no `WeakSet`, `WeakMap`, or processed-node cache. Reusing an element alone should not make the extractor skip its updated contents.
+- Added a regression in `tests/run.js` that retains the same physical `<article>` node, changes its turn identifier and message text, then confirms the next scrape reads the new text and derives a new message ID.
+- Found a related risk in merge identity: `sameMsg()` trusts matching role + ID without checking text. If a virtualizer reuses a row but fails to update the ID attribute, different messages could be treated as one; `pickLonger()` could preserve stale text. This is a plausible failure mode, not confirmed in the user's live chat. We should inspect live before changing identity semantics, because stable IDs are also needed to merge streaming updates correctly.
+- Corrected an existing test label: the test called “reuses nodes” actually prepends newly created nodes and does not simulate DOM node reuse.
+- Verification: full `npm test` passes all 89 tests.
+
+## Context handoff update
+
+- Read existing `CONTEXT.md` before editing; retained Antigravity's architecture and project overview rather than duplicating them.
+- Updated its stale test count (56 -> 89) and added a `Codex — Current Capture Investigation` section with confirmed scraper behavior, the unconfirmed same-ID merge risk, rollback status for the rejected delay, current test coverage, and the next useful live diagnostic.
+- Verified the final document has one test-suite command and one Codex investigation section.

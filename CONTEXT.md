@@ -25,7 +25,7 @@ ai-context-handoff/
 ├── README.md                # Quickstart, usage instructions, known limitations
 ├── package.json             # Dev dependencies (jsdom) and test script
 ├── tests/
-│   └── run.js               # Node.js test runner using JSDOM (56 unit/integration tests)
+│   └── run.js               # Node.js test runner using JSDOM (89 unit/integration tests as of 2026-10-18)
 └── extension/
     ├── manifest.json        # MV3 manifest with storage & host permissions, options_page
     ├── popup/
@@ -103,8 +103,30 @@ When generating a handoff prompt, `CTX.buildHandoff(chat, opts)` enforces priori
 
 ## Development & Test Commands
 - **Install dependencies**: `npm install`
-- **Run test suite**: `npm test` (executes 56 unit tests in `tests/run.js` via `jsdom`)
+- **Run test suite**: `npm test` (executes 89 tests in `tests/run.js` via `jsdom`, as of 2026-10-18)
 - **Load in Chrome**:
   1. Navigate to `chrome://extensions`.
   2. Toggle **Developer mode**.
   3. Click **Load unpacked** and select the `extension/` folder.
+
+---
+
+## Codex — Current Capture Investigation (2026-10-18)
+
+### Current user report
+- Short conversations capture correctly. Long conversations may capture only the newest portion, omit middle messages, or contain repeats.
+- This points toward long-chat-specific behavior (virtualized/recycled DOM, lazy loading, scroll-container behavior, or multi-window merge identity) rather than a universal failure of the basic selectors.
+
+### Verified from the current implementation
+- `extension/src/extract.js`: every `CTX.scrape(adapter)` call re-runs `document.querySelectorAll(...)` and reads current element text. There is no `WeakSet`, `WeakMap`, or node-level “already processed” cache. Reusing a DOM node alone does not make the scraper skip it.
+- Message IDs may come from first-party message/search keys or turn-level fallback IDs. Turn fallback IDs include role-local index to distinguish multiple messages inside a turn.
+- `sameMsg()` in `extract.js` trusts matching role + ID without comparing text. If a virtualizer reuses a row but fails to update its identity attributes, merge may treat different text as one message. This is a plausible risk; it has not been confirmed on the user's live page.
+- In manual capture, the loop scrolls, waits for DOM quiet, then scrapes. These steps are sequential. A network request can still be pending while the DOM appears quiet.
+- A proposed 750 ms post-scroll wait was tried and then reverted at the user's request. Do not reintroduce it unless asked.
+- The existing test named “fake virtualized list that reuses nodes” actually prepends newly created nodes. Its name has been corrected. A separate regression now retains the same physical node, changes its turn ID and text, and verifies a new scrape reads the updated content.
+
+### Current validation and next diagnostic
+- `npm test`: 89 tests pass after the recycled-node extraction regression.
+- Short-chat success does not establish completeness for long virtualized chats; jsdom tests cannot confirm current live-site behavior.
+- To localize a real failure, compare each capture step's fresh scraped window (message IDs, roles, text fingerprints, first/last messages, scrollTop, scrollHeight) with the merge result and final stored sequence. This separates failure to render/load a message from failure to merge a message that was already scraped.
+- Avoid global text deduplication: users may legitimately repeat identical prompts or answers.
